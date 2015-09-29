@@ -1,0 +1,307 @@
+#!/usr/bin/env python
+#
+# Ice Shelf for Glacier is a incremental backup tool which will upload any
+# changes to glacier. It can both encrypt and/or provide extra parity data
+# to make sure that the data is secure and has some measure of protection
+# against data corruption.
+#
+# Each backup can therefore be restored individually at the expense of
+# extra storage in Glacier.
+#
+###############################################################################
+import logging
+import argparse
+import sys
+import os.path
+import hashlib
+import json
+from datetime import datetime
+import shutil
+import gnupg
+from subprocess import Popen, PIPE
+
+import utils.config
+
+oldFiles = {}
+newFiles = {}
+currentOp = {"filecount": 0, "filesize": 0, "compressable" : 0}
+
+incompressable = [
+  "jpg", "gif", "mkv", "avi", "mov", "mp4",
+  "mp3", "flac", "zip", "bz2", "gz", "tgz",
+  "7z", "aac", "rar", "vob", "m2ts", "ts",
+  "jpeg", "psd", "png"
+  ]
+
+""" Parse command line """
+parser = argparse.ArgumentParser(description="IceShelf - An Amazon Galcier Incremental backup tool", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+parser.add_argument('--logfile', metavar="FILE", help="Log to file instead of stdout")
+parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
+cmdline = parser.parse_args()
+
+""" Setup logging first """
+logging.getLogger('').handlers = []
+logging.basicConfig(filename=cmdline.logfile, level=logging.DEBUG, format='%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s')
+logging.getLogger("gnupg").setLevel(logging.WARNING)
+logging.getLogger("shutil").setLevel(logging.WARNING)
+
+#######################
+
+def hashfile(file):
+  print repr(hashlib.algorithms)
+  sha = hashlib.new("sha512")
+  with open(file, 'rb') as fp:
+    for chunk in iter(lambda: fp.read(32768), b''):
+      sha.update(chunk)
+  return sha.hexdigest()
+
+def shouldCompress():
+  chance = int((currentOp["compressable"] * 100) / currentOp["filecount"])
+  return chance > 90
+
+def willCompress(filename):
+  (ignore, ext) = os.path.splitext(filename)
+  return ext[1:].lower() not in incompressable
+
+def collectFile(filename):
+  chksum = ""
+  info = os.stat(filename)
+  maxsize = config["maxsize"]
+
+  if maxsize != 0 and (currentOp["filesize"] + info.st_size) > maxsize:
+    if currentOp["filecount"] == 0:
+      # Todo: Allow splitting
+      logging.error("The max size is too low, %s will never fit" % filename)
+    return False
+
+  if config["use-sha"]:
+    chksum = hashfile(filename)
+  else:
+    chksum = "%x-%x" % (info.st_size, info.st_mtime)
+
+  if filename not in oldFiles or oldFiles[filename] != chksum:
+    # Make sure path exists, then copy it...
+    destfile = os.path.join(config["archivedir"], filename[1:])
+    destdir = os.path.dirname(destfile)
+    if not os.path.isdir(destdir):
+      try:
+        os.makedirs(destdir)
+      except OSError as e:
+        if e.errno is not 17:
+          logging.exception("Error creating directory structure")
+          raise
+
+    # Copy the files into its new location
+    shutil.copy2(filename, destfile)
+
+    currentOp["filecount"] += 1
+    currentOp["filesize"] += info.st_size
+    if willCompress(filename):
+      currentOp["compressable"] += 1
+    newFiles[filename] = chksum
+
+  return True
+
+def collectSources(sources):
+  # Time to start building a list of files
+  for path in sources:
+    if os.path.isfile(path):
+      if not collectFile(path):
+        return False
+    else:
+      for root, dirs, files in os.walk(path):
+        for f in files:
+          if not collectFile(os.path.join(root, f)):
+            return False
+  return True
+
+def clearPrepDir():
+  for root, dirs, files in os.walk(config["prepdir"], topdown=False):
+    for name in files:
+      os.remove(os.path.join(root, name))
+    for name in dirs:
+      os.rmdir(os.path.join(root, name))
+
+def deleteArchiveSource():
+  for root, dirs, files in os.walk(config["archivedir"], topdown=False):
+    for name in files:
+      os.remove(os.path.join(root, name))
+    for name in dirs:
+      os.rmdir(os.path.join(root, name))
+  os.rmdir(config["archivedir"])
+
+def generateParity(filename, level):
+  if level is 0:
+    return False
+  cmd = ["par2", "create", "-n1", "-r"+str(level), filename]
+  p = Popen(cmd, stdout=PIPE, stderr=PIPE)
+  out, err = p.communicate()
+  if p.returncode != 0:
+    print "Output: " + out
+    print "Error : " + err
+    print "Code  : " + str(p.returncode)
+  return p.returncode == 0
+
+def gatherData():
+  mode = "tar"
+  file_archive_plain = os.path.join(config["prepdir"], config["unique"])
+  file_archive = file_archive_plain + ".tar"
+  file_manifest = os.path.join(config["prepdir"], config["unique"]) + ".json"
+  gpg = gnupg.GPG(options=['-z', '0']) # Do not use GPG compression since we use bzip2
+
+  if shouldCompress():
+    mode = "bztar"
+    file_archive += ".bz2"
+  else:
+    logging.info("Content is not likely to compress (%d%% chance), skipping compression.", shouldCompress())
+
+  # Generate archive
+  archive = shutil.make_archive(file_archive_plain, mode, config["archivedir"],logger=logging)
+  if archive is None or archive == "":
+    logging.error("Was unable to create archive")
+    return None
+  logging.info("Removing temporary copies of files")
+  deleteArchiveSource()
+
+  # Produce the manifest
+  if config["manifest"]:
+    with open(file_manifest, "w") as fp:
+      json.dump(newFiles, fp)
+
+  # Security for the archive
+  if config["encrypt"]:
+    logging.info("Encrypting archive")
+    with open(file_archive, 'rb') as fp:
+      gpg.encrypt_file(
+        fp,
+        config["encrypt"],
+        passphrase=config["encrypt-pw"],
+        output=file_archive+".gpg"
+      )
+      # Remove old content
+      os.remove(file_archive)
+      file_archive += ".gpg"
+  if config["sign"]:
+    logging.info("Signing archive")
+    with open(file_archive, 'rb') as fp:
+      gpg.sign_file(
+        fp,
+        keyid=config["sign"],
+        passphrase=config["sign-pw"],
+        output=file_archive+".asc"
+      )
+      # Remove old content
+      os.remove(file_archive)
+      file_archive += ".asc"
+
+  # Add parity if requested
+  if config["parity"] > 0 and not generateParity(file_archive, config["parity"]):
+      logging.error("Unable to create PAR2 file for this archive")
+      return None
+
+  # Security for all companion files...
+  if config["sign"]:
+    if config["manifest"]:
+      logging.info("Signing manifest")
+      with open(file_manifest, 'rb') as fp:
+        gpg.sign_file(
+          fp,
+          keyid=config["sign"],
+          passphrase=config["sign-pw"],
+          output=file_manifest+".asc"
+        )
+        # Remove old content
+        os.remove(file_manifest)
+        file_manifest += ".asc"
+    if config["parity"] > 0:
+      logging.info("Signing parity")
+      for f in os.listdir(config["prepdir"]):
+        if f.endswith('.par2'):
+          f = os.path.join(config["prepdir"], f)
+          with open(f, 'rb') as fp:
+            data = gpg.sign_file(
+              fp,
+              keyid=config["sign"],
+              passphrase=config["sign-pw"],
+              output=f+".asc"
+            )
+            # Remove old content
+            os.remove(f)
+  return os.listdir(config["prepdir"])
+
+def sumsize(path, files):
+  result = 0
+  for f in files:
+    result += os.path.getsize(os.path.join(path, f))
+  return result
+
+def formatsize(size):
+  if size >= 1099511627776:
+    return "%.1dT" % (size/1099511627776)
+  if size >= 1073741824:
+    return "%.1dG" % (size/1073741824)
+  if size >= 1048576:
+    return "%.1dM" % (size/1048576)
+  if size >= 1024:
+    return "%.1dK" % (size/1024)
+
+#####################
+
+config = utils.config.parse(cmdline.config)
+if config is None:
+  logging.error("Configuration is broken, please check %s" % cmdline.config)
+  sys.exit(1)
+
+# Prep some needed config items which we generate
+config["file-checksum"] = os.path.join(config["datadir"], "checksum.json")
+tm = datetime.utcnow()
+config["unique"] = "%d%02d%02d-%02d%02d%02d-%05x" % (tm.year, tm.month, tm.day, tm.hour, tm.minute, tm.second, tm.microsecond)
+config["archivedir"] = os.path.join(config["prepdir"], config["unique"])
+
+logging.info("Configuration is sane")
+
+if os.path.exists(config["file-checksum"]):
+  with open(config["file-checksum"], "r") as fp:
+    oldFiles = json.load(fp)
+  logging.info("Loaded previous checksums")
+else:
+  logging.info("First run, no previous checksums")
+
+logging.info("Clearing the prep directory")
+clearPrepDir()
+
+logging.info("Checking sources for changes")
+gotall = collectSources(config['sources'])
+
+if not gotall:
+  logging.warn("Reached size limit, recommend running again after this session")
+
+if len(newFiles) == 0 and not gotall:
+  logging.error("Can't continue, you have files bigger than maxsize")
+  sys.exit(255)
+
+# Time to compress
+files = gatherData()
+if files is None:
+  logging.error("Failed to gather all data and compress it.")
+  sys.exit(2)
+
+msg = "%d files (%s bytes) gathered" % (currentOp["filecount"], formatsize(currentOp["filesize"]))
+if config["compress"]:
+  msg += ", compressed"
+if config["encrypt"]:
+  msg += ", encrypted"
+if config["sign"]:
+  msg += ", signed"
+msg += " and ready to upload as %d files, total %s bytes" % (len(files), formatsize(sumsize(config["prepdir"], files)))
+logging.info(msg)
+
+# merge
+for k,v in newFiles.iteritems():
+  oldFiles[k] = newFiles[k]
+
+print "Saving the data..."
+with open(config["file-checksum"], "w") as fp:
+  json.dump(oldFiles, fp)
+
+print "Done!"
