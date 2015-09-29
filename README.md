@@ -21,3 +21,9 @@ at. Also the reason it's called iceshelf. To quote from wikipedia:
 
 *(and yes, this would probably mean that time runs in reverse, but bear with
 me, finding cool names (phun intended) for projects is not always easy)*
+
+# Current state
+
+Right now, the tool will do everything except transfer the files it generates.
+Which is a bit of a letdown. But I need to verify locally that the tool works
+properly before I let it loose on AWS Glacier since it could get very costly.
