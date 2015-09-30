@@ -33,6 +33,7 @@ import os.path
 import hashlib
 import json
 from datetime import datetime
+import time
 import shutil
 import gnupg
 from subprocess import Popen, PIPE
@@ -47,12 +48,14 @@ incompressable = [
   "jpg", "gif", "mkv", "avi", "mov", "mp4",
   "mp3", "flac", "zip", "bz2", "gz", "tgz",
   "7z", "aac", "rar", "vob", "m2ts", "ts",
-  "jpeg", "psd", "png"
+  "jpeg", "psd", "png", "m4v", "m4a", "3gp",
+  "tif", "tiff", "mts"
   ]
 
 """ Parse command line """
 parser = argparse.ArgumentParser(description="IceShelf - An Amazon Galcier Incremental backup tool", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--logfile', metavar="FILE", help="Log to file instead of stdout")
+parser.add_argument('--changes', action='store_true', default=False, help="Show changes to backup set but don't do anything")
 parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
 cmdline = parser.parse_args()
 
@@ -85,10 +88,11 @@ def collectFile(filename):
   info = os.stat(filename)
   maxsize = config["maxsize"]
 
-  if maxsize != 0 and (currentOp["filesize"] + info.st_size) > maxsize:
-    if currentOp["filecount"] == 0:
-      # Todo: Allow splitting
-      logging.error("The max size is too low, %s will never fit" % filename)
+  if maxsize > 0 and info.st_size > maxsize:
+    logging.warn("File \"%s\" is too big (%s) to ever fit inside defined max size of %s", filename, formatsize(info.st_size), formatsize(config["maxsize"]))
+    return False
+
+  if maxsize > 0 and (currentOp["filesize"] + info.st_size) > maxsize and not cmdline.changes:
     return False
 
   if config["use-sha"]:
@@ -97,6 +101,16 @@ def collectFile(filename):
     chksum = "%x-%x" % (info.st_size, info.st_mtime)
 
   if filename not in oldFiles or oldFiles[filename] != chksum:
+    # When looking for changes, count files and size but don't process
+    if cmdline.changes:
+      currentOp["filecount"] += 1
+      currentOp["filesize"] += info.st_size
+      if filename not in oldFiles:
+        logging.info("\"%s\" missing from backup", filename)
+      else:
+        logging.info("\"%s\" changed from last backup", filename)
+      return False
+
     # Make sure path exists, then copy it...
     destfile = os.path.join(config["archivedir"], filename[1:])
     destdir = os.path.dirname(destfile)
@@ -121,16 +135,25 @@ def collectFile(filename):
 
 def collectSources(sources):
   # Time to start building a list of files
-  for path in sources:
+  result = True
+  for name,path in sources.iteritems():
+    logging.info("Processing \"%s\"", name)
     if os.path.isfile(path):
       if not collectFile(path):
-        return False
+        if not config["persuasive"] and not cmdline.changes:
+          return False
+        else:
+          result = False
     else:
       for root, dirs, files in os.walk(path):
         for f in files:
           if not collectFile(os.path.join(root, f)):
-            return False
-  return True
+            if not config["persuasive"] and not cmdline.changes:
+              logging.debug("Not persuasive")
+              return False
+            else:
+              result = False
+  return result
 
 def clearPrepDir():
   for root, dirs, files in os.walk(config["prepdir"], topdown=False):
@@ -150,7 +173,7 @@ def deleteArchiveSource():
 def generateParity(filename, level):
   if level is 0:
     return False
-  cmd = ["par2", "create", "-n1", "-r"+str(level), filename]
+  cmd = ["par2", "create", "-r"+str(level), filename]
   p = Popen(cmd, stdout=PIPE, stderr=PIPE)
   out, err = p.communicate()
   if p.returncode != 0:
@@ -166,11 +189,12 @@ def gatherData():
   file_manifest = os.path.join(config["prepdir"], config["unique"]) + ".json"
   gpg = gnupg.GPG(options=['-z', '0']) # Do not use GPG compression since we use bzip2
 
-  if shouldCompress():
-    mode = "bztar"
-    file_archive += ".bz2"
-  else:
-    logging.info("Content is not likely to compress (%d%% chance), skipping compression.", shouldCompress())
+  if config["compress"]:
+    if config["compress-force"] or shouldCompress():
+      mode = "bztar"
+      file_archive += ".bz2"
+    else:
+      logging.info("Content is not likely to compress (%d%% chance), skipping compression.", shouldCompress())
 
   # Generate archive
   archive = shutil.make_archive(file_archive_plain, mode, config["archivedir"],logger=logging)
@@ -193,6 +217,7 @@ def gatherData():
         fp,
         config["encrypt"],
         passphrase=config["encrypt-pw"],
+        armor=False,
         output=file_archive+".gpg"
       )
       # Remove old content
@@ -205,11 +230,12 @@ def gatherData():
         fp,
         keyid=config["sign"],
         passphrase=config["sign-pw"],
-        output=file_archive+".asc"
+        binary=True,
+        output=file_archive+".sig"
       )
       # Remove old content
       os.remove(file_archive)
-      file_archive += ".asc"
+      file_archive += ".sig"
 
   # Add parity if requested
   if config["parity"] > 0 and not generateParity(file_archive, config["parity"]):
@@ -240,7 +266,8 @@ def gatherData():
               fp,
               keyid=config["sign"],
               passphrase=config["sign-pw"],
-              output=f+".asc"
+              binary=True,
+              output=f+".sig"
             )
             # Remove old content
             os.remove(f)
@@ -261,6 +288,7 @@ def formatsize(size):
     return "%.1dM" % (size/1048576)
   if size >= 1024:
     return "%.1dK" % (size/1024)
+  return str(size)
 
 #####################
 
@@ -268,6 +296,10 @@ config = utils.config.parse(cmdline.config)
 if config is None:
   logging.error("Configuration is broken, please check %s" % cmdline.config)
   sys.exit(1)
+
+# Add more extensions (if provided)
+if config["extra-ext"] is not None:
+  incompressable += config["extra-ext"]
 
 # Prep some needed config items which we generate
 config["file-checksum"] = os.path.join(config["datadir"], "checksum.json")
@@ -279,8 +311,13 @@ logging.info("Configuration is sane")
 
 if os.path.exists(config["file-checksum"]):
   with open(config["file-checksum"], "r") as fp:
-    oldFiles = json.load(fp)
-  logging.info("Loaded previous checksums")
+    oldSave = json.load(fp)
+    oldFiles = oldSave["dataset"]
+  logging.info(
+    "Loaded previous checksums, last run was %s using version %s",
+    datetime.fromtimestamp(oldSave["timestamp"]).strftime("%c"),
+    oldSave["version"]
+  )
 else:
   logging.info("First run, no previous checksums")
 
@@ -290,10 +327,23 @@ clearPrepDir()
 logging.info("Checking sources for changes")
 gotall = collectSources(config['sources'])
 
-if not gotall:
-  logging.warn("Reached size limit, recommend running again after this session")
+# Don't continue, just give summary and a good exit-code
+if cmdline.changes:
+  if currentOp["filecount"] > 0:
+    if len(oldFiles) == 0:
+      msg = "%d files (%s) to be backed up"
+    else:
+      msg = "%d files (%s) has changed or been added since last backup"
+    logging.info(msg, currentOp["filecount"], formatsize(currentOp["filesize"]))
+    sys.exit(1)
+  else:
+    logging.info("No file(s) changed or added since last backup")
+    sys.exit(0)
 
 if len(newFiles) == 0 and not gotall:
+  if config["ignore-overlimit"]:
+    logging.info("Done. There were files which didn't fit the maxsize limit, but they were ignored")
+    sys.exit(0)
   logging.error("Can't continue, you have files bigger than maxsize")
   sys.exit(255)
 
@@ -304,7 +354,7 @@ if files is None:
   sys.exit(2)
 
 msg = "%d files (%s bytes) gathered" % (currentOp["filecount"], formatsize(currentOp["filesize"]))
-if config["compress"]:
+if config["compress"] and (shouldCompress() or config["compress-force"]):
   msg += ", compressed"
 if config["encrypt"]:
   msg += ", encrypted"
@@ -318,7 +368,15 @@ for k,v in newFiles.iteritems():
   oldFiles[k] = newFiles[k]
 
 print "Saving the data..."
+saveData = {
+  "version" : "1.0.0",
+  "timestamp" : time.time(),
+  "dataset" : oldFiles
+}
 with open(config["file-checksum"], "w") as fp:
-  json.dump(oldFiles, fp)
+  json.dump(saveData, fp)
+
+if not gotall:
+  logging.warn("Reached size limit, recommend running again after this session")
 
 print "Done!"

@@ -1,6 +1,7 @@
 import ConfigParser
 import sys
 import os.path
+import logging
 
 def parse(filename):
   result = {
@@ -14,9 +15,12 @@ def parse(filename):
     "maxsize": 0,
     "prepdir": "/tmp/",
     "datadir": "backup/",
-    "sources": [],
+    "sources": {},
     "pursuasive": False,
-    "compress": True
+    "compress": True,
+    "compress-force": False,
+    "ignore-overlimit": False,
+    "extra-ext" : None
   }
   config = ConfigParser.ConfigParser()
   # Some sane defaults
@@ -32,7 +36,7 @@ def parse(filename):
   config.set("options", "change method", "meta")
   config.set("options", "delta manifest", "yes")
   config.set("options", "compress", "yes")
-  config.set("options", "pursuasive", "no")
+  config.set("options", "persuasive", "no")
 
   config.add_section("glacier")
   config.set("glacier", "vault", "")
@@ -61,29 +65,31 @@ def parse(filename):
   if config.get("security", "sign phrase") != "":
     result["sign-pw"] = config.get("security", "sign phrase")
 
-  if not config.get("security", "add parity").isdigit() or config.getint("security", "add parity") > 100 or config.getint("security", "add parity") < 0:
-    logging.error("Parity ranges from 0 to 100, " + config.get("security", "add parity") + " is invalid")
-    return None
-  else:
-    result["parity"] = config.getint("security", "add parity")
-
   if config.get("options", "delta manifest").lower() not in ["yes", "no"]:
     logging.error("Delta Manifest has to be yes/no")
     return None
   elif config.get("options", "delta manifest").lower() == "no":
     result["manifest"] = False
 
-  if config.get("options", "pursuasive").lower() not in ["yes", "no"]:
-    logging.error("pursuasive has to be yes/no")
+  if config.get("options", "persuasive").lower() not in ["yes", "no"]:
+    logging.error("persuasive has to be yes/no")
     return None
-  elif config.get("options", "pursuasive").lower() == "yes":
-    result["pursuasive"] = True
+  elif config.get("options", "persuasive").lower() == "yes":
+    result["persuasive"] = True
 
-  if config.get("options", "compress").lower() not in ["yes", "no"]:
+  if config.get("options", "ignore overlimit").lower() not in ["yes", "no"]:
+    logging.error("ignore overlimit has to be yes/no")
+    return None
+  elif config.get("options", "ignore overlimit").lower() == "yes":
+    result["ignore-overlimit"] = True
+
+  if config.get("options", "compress").lower() not in ["force", "yes", "no"]:
     logging.error("compress has to be yes/no")
     return None
   elif config.get("options", "compress").lower() == "no":
     result["compress"] = False
+  elif config.get("options", "compress").lower() == "force":
+    result["compress-force"] = True
 
   if config.get("options", "change method").lower() not in ["meta", "data"]:
     logging.error("Change method has to be data or meta")
@@ -91,7 +97,12 @@ def parse(filename):
   elif config.get("options", "change method").lower() == "data":
     result["use-sha"] = True
 
-  if config.get("options", "max size") is not "0":
+  if config.get("options", "incompressible"):
+    result["extra-ext"] = config.get("options", "incompressible").split()
+
+  if config.get("options", "max size").isdigit() and config.getint("options", "max size") > 0:
+    result["maxsize"] = config.getint("options", "max size")
+  elif not config.get("options", "max size").isdigit():
     unit = config.get("options", "max size").lower()[-1:]
     value = config.get("options", "max size")[:-1]
     if not value.isdigit():
@@ -112,6 +123,15 @@ def parse(filename):
       sys.exit(1)
     result["maxsize"] = value
 
+  if not config.get("security", "add parity").isdigit() or config.getint("security", "add parity") > 100 or config.getint("security", "add parity") < 0:
+    logging.error("Parity ranges from 0 to 100, " + config.get("security", "add parity") + " is invalid")
+    return None
+  else:
+    result["parity"] = config.getint("security", "add parity")
+    if result["maxsize"] > 34359738367:
+      logging.warn("max size is limited to 32GB when using parity, changing setting accordingly")
+      result["maxsize"] = 34359738367 # (actually 32GB - 1 byte)
+
   if config.get("paths", "prep dir") == "" or not os.path.isdir(config.get("paths", "prep dir")):
     logging.error("Preparation dir doesn't exist")
     return None
@@ -130,8 +150,8 @@ def parse(filename):
       logging.error("Source " + x + " is empty")
       return None
     if not os.path.exists(config.get("sources", x)):
-      logging.error("Source " + x + " points to a non-existing entry: " + config.get("sources", x))
+      logging.error("Source \"%s\" points to a non-existing entry \"%s\"", x, config.get("sources", x))
       return None
-    result["sources"].append(config.get("sources", x))
+    result["sources"][x] = config.get("sources", x)
 
   return result
