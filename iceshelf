@@ -42,6 +42,7 @@ import utils.config
 
 oldFiles = {}
 newFiles = {}
+backupSets = {}
 currentOp = {"filecount": 0, "filesize": 0, "compressable" : 0}
 
 incompressable = [
@@ -61,7 +62,10 @@ cmdline = parser.parse_args()
 
 """ Setup logging first """
 logging.getLogger('').handlers = []
-logging.basicConfig(filename=cmdline.logfile, level=logging.DEBUG, format='%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s')
+loglevel=logging.WARNING
+if cmdline.logfile:
+  loglevel=logging.DEBUG
+logging.basicConfig(filename=cmdline.logfile, level=loglevel, format='%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s')
 logging.getLogger("gnupg").setLevel(logging.WARNING)
 logging.getLogger("shutil").setLevel(logging.WARNING)
 
@@ -77,7 +81,7 @@ def hashfile(file):
 
 def shouldCompress():
   chance = int((currentOp["compressable"] * 100) / currentOp["filecount"])
-  return chance > 90
+  return chance >= 20
 
 def willCompress(filename):
   (ignore, ext) = os.path.splitext(filename)
@@ -100,7 +104,7 @@ def collectFile(filename):
   else:
     chksum = "%x-%x" % (info.st_size, info.st_mtime)
 
-  if filename not in oldFiles or oldFiles[filename] != chksum:
+  if filename not in oldFiles or oldFiles[filename]["checksum"] != chksum:
     # When looking for changes, count files and size but don't process
     if cmdline.changes:
       currentOp["filecount"] += 1
@@ -129,7 +133,7 @@ def collectFile(filename):
     currentOp["filesize"] += info.st_size
     if willCompress(filename):
       currentOp["compressable"] += 1
-    newFiles[filename] = chksum
+    newFiles[filename] = {"checksum" : chksum, "memberof" : [config["unique"]]}
 
   return True
 
@@ -309,10 +313,14 @@ config["archivedir"] = os.path.join(config["prepdir"], config["unique"])
 
 logging.info("Configuration is sane")
 
+"""
+Load the old data, containing checksums and backup sets
+"""
 if os.path.exists(config["file-checksum"]):
   with open(config["file-checksum"], "r") as fp:
     oldSave = json.load(fp)
     oldFiles = oldSave["dataset"]
+    backupSets = oldSave["backups"]
   logging.info(
     "Loaded previous checksums, last run was %s using version %s",
     datetime.fromtimestamp(oldSave["timestamp"]).strftime("%c"),
@@ -363,20 +371,36 @@ if config["sign"]:
 msg += " and ready to upload as %d files, total %s bytes" % (len(files), formatsize(sumsize(config["prepdir"], files)))
 logging.info(msg)
 
-# merge
+##############################################################################
+#
+
+# This would be where we upload the data... oh well, not yet
+
+#
+##############################################################################
+
+# merge new files, checksums and memberships
 for k,v in newFiles.iteritems():
+  if k in oldFiles: # Don't forget any old memberships
+    newFiles[k]["memberof"] += oldFiles[k]["memberof"]
   oldFiles[k] = newFiles[k]
 
-print "Saving the data..."
+# Add the backup to our sets...
+backupSets[config["unique"]] = files
+
+logging.info("Saving the new checksum")
 saveData = {
   "version" : "1.0.0",
   "timestamp" : time.time(),
-  "dataset" : oldFiles
+  "dataset" : oldFiles,
+  "backups" : backupSets
 }
-with open(config["file-checksum"], "w") as fp:
+with open(config["file-checksum"] + "_tmp", "w") as fp:
   json.dump(saveData, fp)
+
+# Copy the new file into place and then delete the temp file
+shutil.copy(config["file-checksum"] + "_tmp", config["file-checksum"])
+os.remove(config["file-checksum"] + "_tmp")
 
 if not gotall:
   logging.warn("Reached size limit, recommend running again after this session")
-
-print "Done!"

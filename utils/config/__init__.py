@@ -14,9 +14,9 @@ def parse(filename):
     "use-sha": False,
     "maxsize": 0,
     "prepdir": "/tmp/",
-    "datadir": "backup/",
+    "datadir": "data/",
     "sources": {},
-    "pursuasive": False,
+    "persuasive": True,
     "compress": True,
     "compress-force": False,
     "ignore-overlimit": False,
@@ -29,13 +29,14 @@ def parse(filename):
 
   config.add_section("paths")
   config.set("paths", "prep dir", "/tmp/")
-  config.set("paths", "data dir", "backup/")
+  config.set("paths", "data dir", "data/")
 
   config.add_section("options")
   config.set("options", "max size", "0")
   config.set("options", "change method", "meta")
   config.set("options", "delta manifest", "yes")
   config.set("options", "compress", "yes")
+  config.set("options", "incompressible", "")
   config.set("options", "persuasive", "no")
 
   config.add_section("glacier")
@@ -74,8 +75,8 @@ def parse(filename):
   if config.get("options", "persuasive").lower() not in ["yes", "no"]:
     logging.error("persuasive has to be yes/no")
     return None
-  elif config.get("options", "persuasive").lower() == "yes":
-    result["persuasive"] = True
+  elif config.get("options", "persuasive").lower() == "no":
+    result["persuasive"] = False
 
   if config.get("options", "ignore overlimit").lower() not in ["yes", "no"]:
     logging.error("ignore overlimit has to be yes/no")
@@ -130,7 +131,7 @@ def parse(filename):
     result["parity"] = config.getint("security", "add parity")
     if result["maxsize"] > 34359738367:
       logging.warn("max size is limited to 32GB when using parity, changing setting accordingly")
-      result["maxsize"] = 34359738367 # (actually 32GB - 1 byte)
+    result["maxsize"] = 34359738367 # (actually 32GB - 1 byte)
 
   if config.get("paths", "prep dir") == "" or not os.path.isdir(config.get("paths", "prep dir")):
     logging.error("Preparation dir doesn't exist")
