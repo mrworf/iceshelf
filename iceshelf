@@ -37,13 +37,13 @@ import time
 import shutil
 import gnupg
 from subprocess import Popen, PIPE
-
-import utils.config
+import utils
 
 oldFiles = {}
 newFiles = {}
 backupSets = {}
 currentOp = {"filecount": 0, "filesize": 0, "compressable" : 0}
+oldVault = None
 
 incompressable = [
   "jpg", "gif", "mkv", "avi", "mov", "mp4",
@@ -292,9 +292,34 @@ def formatsize(size):
     return "%.1dK" % (size/1024)
   return str(size)
 
+# TODO: This one should actually show output as it goes...
+def glacierCommand(args):
+  if config["glacier-config"] is None:
+    logging.error("glacierCommand() called without proper settings")
+    return None
+
+  cmd = ["glacier-cmd", "-c", config["glacier-config"], "--output", "json"]
+  cmd += args
+  p = Popen(cmd, stdout=PIPE, stderr=PIPE)
+  out, err = p.communicate()
+  return {"code" : p.returncode, "output" : out, "error" : err }
+"""
+upload:
+{'output': '{"Created archive with ID": "", "Archive SHA256 tree hash": "", "Uploaded file": ""}\n', 'code': 0, 'error': ''}
+
+mkvault:
+{"RequestId": "", "Location": "/5555555555/vaults/test"}
+
+lsvault:
+[{"SizeInBytes": 0, "LastInventoryDate": null, "VaultARN": "arn:aws:glacier:", "VaultName": "test", "NumberOfArchives": 0, "CreationDate": "2015-10-01T06:13:47.811Z"}]
+
+
+
+"""
+
 #####################
 
-config = utils.config.parse(cmdline.config)
+config = utils.parseConfig(cmdline.config)
 if config is None:
   logging.error("Configuration is broken, please check %s" % cmdline.config)
   sys.exit(1)
@@ -319,6 +344,7 @@ if os.path.exists(config["file-checksum"]):
     oldSave = json.load(fp)
     oldFiles = oldSave["dataset"]
     backupSets = oldSave["backups"]
+    oldVault = oldSave["vault"]
   logging.info(
     "Loaded previous checksums, last run was %s using version %s",
     datetime.fromtimestamp(oldSave["timestamp"]).strftime("%c"),
@@ -372,7 +398,10 @@ logging.info(msg)
 ##############################################################################
 #
 
-# This would be where we upload the data... oh well, not yet
+# We want to avoid wasting requests, so only try to
+# create vaults if we need to.
+if config["glacier-vault"] != oldVault:
+  logging.info("Glacier vault most likely not in cloud, let's create it")
 
 #
 ##############################################################################
@@ -391,7 +420,8 @@ saveData = {
   "version" : "1.0.0",
   "timestamp" : time.time(),
   "dataset" : oldFiles,
-  "backups" : backupSets
+  "backups" : backupSets,
+  "vault" : config["glacier-vault"]
 }
 with open(config["file-checksum"] + "_tmp", "w") as fp:
   json.dump(saveData, fp)
