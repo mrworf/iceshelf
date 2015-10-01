@@ -20,7 +20,9 @@ def parse(filename):
     "compress": True,
     "compress-force": False,
     "ignore-overlimit": False,
-    "extra-ext" : None
+    "extra-ext" : None,
+    "donedir": None,
+    "maxkeep": 0
   }
   config = ConfigParser.ConfigParser()
   # Some sane defaults
@@ -101,6 +103,13 @@ def parse(filename):
   if config.get("options", "incompressible"):
     result["extra-ext"] = config.get("options", "incompressible").split()
 
+  if config.get("options", "max keep").isdigit():
+    result["maxkeep"] = config.getint("options", "max keep")
+  elif config.get("options", "max keep") is not "":
+    logging.error("Max keep should be a number or empty")
+    return None
+
+
   if config.get("options", "max size").isdigit() and config.getint("options", "max size") > 0:
     result["maxsize"] = config.getint("options", "max size")
   elif not config.get("options", "max size").isdigit():
@@ -129,9 +138,9 @@ def parse(filename):
     return None
   else:
     result["parity"] = config.getint("security", "add parity")
-    if result["maxsize"] > 34359738367:
+    if result["maxsize"] > 34359738367 or result["maxsize"] == 0:
       logging.warn("max size is limited to 32GB when using parity, changing setting accordingly")
-    result["maxsize"] = 34359738367 # (actually 32GB - 1 byte)
+      result["maxsize"] = 34359738367 # (actually 32GB - 1 byte)
 
   if config.get("paths", "prep dir") == "" or not os.path.isdir(config.get("paths", "prep dir")):
     logging.error("Preparation dir doesn't exist")
@@ -144,6 +153,12 @@ def parse(filename):
     return None
   else:
     result["datadir"] = config.get("paths", "data dir")
+
+  if config.get("paths", "done dir") != "" and not os.path.isdir(config.get("paths", "done dir")):
+    logging.error("Done dir doesn't exist")
+    return None
+  elif config.get("paths", "done dir") != "":
+    result["donedir"] = config.get("paths", "done dir")
 
   # Finally, check that all sources are either directories or files
   for x in config.options("sources"):

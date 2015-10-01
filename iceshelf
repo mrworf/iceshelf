@@ -62,9 +62,7 @@ cmdline = parser.parse_args()
 
 """ Setup logging first """
 logging.getLogger('').handlers = []
-loglevel=logging.WARNING
-if cmdline.logfile:
-  loglevel=logging.DEBUG
+loglevel=logging.DEBUG
 logging.basicConfig(filename=cmdline.logfile, level=loglevel, format='%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s')
 logging.getLogger("gnupg").setLevel(logging.WARNING)
 logging.getLogger("shutil").setLevel(logging.WARNING)
@@ -402,5 +400,30 @@ with open(config["file-checksum"] + "_tmp", "w") as fp:
 shutil.copy(config["file-checksum"] + "_tmp", config["file-checksum"])
 os.remove(config["file-checksum"] + "_tmp")
 
+if config["donedir"] is not None:
+  logging.info("Moving backed up archive into done directory")
+  dest = os.path.join(config["donedir"], config["unique"])
+  os.mkdir(dest)
+  for f in files:
+    shutil.copy(
+      os.path.join(config["prepdir"], f),
+      os.path.join(dest, f)
+    )
+    os.remove(os.path.join(config["prepdir"], f))
+  os.rmdir(config["prepdir"])
+
+  # Finally, we count the number of stored archives and delete the
+  # older ones exceeding the defined limit.
+  if config["maxkeep"] > 0:
+    archives = os.listdir(config["donedir"])
+    archives.sort()
+    logging.info("Told to keep %d archive(s), we have %d", config["maxkeep"], len(archives))
+    while len(archives) > config["maxkeep"]:
+      folder = archives.pop(0)
+      logging.info("Deleting \"%s\"", folder)
+      shutil.rmtree(os.path.join(config["donedir"], folder))
+
 if not gotall:
   logging.warn("Reached size limit, recommend running again after this session")
+  sys.exit(10)
+sys.exit(0)
