@@ -141,7 +141,7 @@ def parseConfig(filename):
   if not config.get("security", "add parity").isdigit() or config.getint("security", "add parity") > 100 or config.getint("security", "add parity") < 0:
     logging.error("Parity ranges from 0 to 100, " + config.get("security", "add parity") + " is invalid")
     return None
-  else:
+  elif config.getint("security", "add parity") > 0:
     result["parity"] = config.getint("security", "add parity")
     if result["maxsize"] > 34359738367 or result["maxsize"] == 0:
       logging.warn("max size is limited to 32GB when using parity, changing setting accordingly")
