@@ -58,6 +58,8 @@ parser = argparse.ArgumentParser(description="IceShelf - An Amazon Galcier Incre
 parser.add_argument('--logfile', metavar="FILE", help="Log to file instead of stdout")
 parser.add_argument('--debug', action='store_true', default=False, help='Adds more details to the log output')
 parser.add_argument('--changes', action='store_true', default=False, help="Show changes to backup set but don't do anything")
+parser.add_argument('--find', metavar='STRING', help='Searches the backup archive for files which contain string in name (case-insensitive)')
+parser.add_argument('--show', metavar='ARCHIVE', help='Shows members of a certain archive')
 parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
 cmdline = parser.parse_args()
 
@@ -358,6 +360,33 @@ if os.path.exists(config["file-checksum"]):
   )
 else:
   logging.info("First run, no previous checksums")
+
+if cmdline.show:
+  archive = cmdline.show.lower()
+  if archive in backupSets:
+    logging.info("Members of \"%s\":", archive)
+    for f in backupSets[archive]:
+      logging.info("  %s", f)
+  else:
+    logging.error("No such backup, \"%s\"", cmdline.show)
+  sys.exit(0)
+
+if cmdline.find:
+  logging.info("Searching for \"%s\"", cmdline.find)
+  found = 0
+  for k,v in oldFiles.iteritems():
+    if k.lower().find(cmdline.find.lower()) is not -1:
+      logging.info("  \"%s\", exists in:", k)
+      found += 1
+      v["memberof"].sort()
+      for x in v["memberof"]:
+        logging.info("    %s", x)
+  logging.info("Found %d instances", found)
+  if found:
+    sys.exit(0)
+  else:
+    sys.exit(1)
+
 
 logging.info("Clearing the prep directory")
 clearPrepDir()
