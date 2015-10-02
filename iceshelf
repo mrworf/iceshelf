@@ -56,14 +56,22 @@ incompressable = [
 """ Parse command line """
 parser = argparse.ArgumentParser(description="IceShelf - An Amazon Galcier Incremental backup tool", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--logfile', metavar="FILE", help="Log to file instead of stdout")
+parser.add_argument('--debug', action='store_true', default=False, help='Adds more details to the log output')
 parser.add_argument('--changes', action='store_true', default=False, help="Show changes to backup set but don't do anything")
 parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
 cmdline = parser.parse_args()
 
 """ Setup logging first """
 logging.getLogger('').handlers = []
-loglevel=logging.DEBUG
-logging.basicConfig(filename=cmdline.logfile, level=loglevel, format='%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s')
+loglevel=logging.INFO
+if cmdline.logfile:
+  logformat='%(asctime)s - %(levelname)s - %(message)s'
+else:
+  logformat='%(message)s'
+if cmdline.debug:
+  logformat='%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s'
+
+logging.basicConfig(stream=sys.stdout, filename=cmdline.logfile, level=loglevel, format=logformat)
 logging.getLogger("gnupg").setLevel(logging.WARNING)
 logging.getLogger("shutil").setLevel(logging.WARNING)
 
@@ -139,7 +147,7 @@ def collectSources(sources):
   # Time to start building a list of files
   result = True
   for name,path in sources.iteritems():
-    logging.info("Processing \"%s\"", name)
+    logging.info("Processing \"%s\" (%s)", name, path)
     if os.path.isfile(path):
       if not collectFile(path):
         if not config["persuasive"] and not cmdline.changes:
@@ -334,8 +342,6 @@ tm = datetime.utcnow()
 config["unique"] = "%d%02d%02d-%02d%02d%02d-%05x" % (tm.year, tm.month, tm.day, tm.hour, tm.minute, tm.second, tm.microsecond)
 config["archivedir"] = os.path.join(config["prepdir"], config["unique"])
 
-logging.info("Configuration is sane")
-
 """
 Load the old data, containing checksums and backup sets
 """
@@ -346,7 +352,7 @@ if os.path.exists(config["file-checksum"]):
     backupSets = oldSave["backups"]
     oldVault = oldSave["vault"]
   logging.info(
-    "Loaded previous checksums, last run was %s using version %s",
+    "State loaded, last run was %s using version %s",
     datetime.fromtimestamp(oldSave["timestamp"]).strftime("%c"),
     oldSave["version"]
   )
