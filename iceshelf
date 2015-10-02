@@ -60,6 +60,7 @@ parser.add_argument('--debug', action='store_true', default=False, help='Adds mo
 parser.add_argument('--changes', action='store_true', default=False, help="Show changes to backup set but don't do anything")
 parser.add_argument('--find', metavar='STRING', help='Searches the backup archive for files which contain string in name (case-insensitive)')
 parser.add_argument('--show', metavar='ARCHIVE', help='Shows members of a certain archive')
+parser.add_argument('--modified', action='store_true', default=False, help='Show all files which exists multiple times due to modifications')
 parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
 cmdline = parser.parse_args()
 
@@ -360,6 +361,19 @@ if os.path.exists(config["file-checksum"]):
   )
 else:
   logging.info("First run, no previous checksums")
+
+if cmdline.modified:
+  found = 0
+  logging.info("Searching for modified files:")
+  for k,v in oldFiles.iteritems():
+    if len(v["memberof"]) > 1:
+      found += 1
+      logging.info("\"%s\" modified %d times", k, len(v["memberof"]))
+  logging.info("Found %d files (of %d) which have been modified", found, len(oldFiles))
+  if found:
+    sys.exit(0)
+  else:
+    sys.exit(1)
 
 if cmdline.show:
   archive = cmdline.show.lower()
