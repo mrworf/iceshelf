@@ -180,11 +180,12 @@ def parseConfig(filename):
     if config.get("glacier", "config") != "" and not os.path.exists(config.get("glacier", "config")):
       logging.error("Glacier config not found")
       return None
-    result["glacier-config"] = config.get("glacier", "config")
-    if not config.has_option("glacier", "vault") or config.get("glacier", "vault") == "":
-      logging.error("Glacier vault not defined")
-      return None
-    result["glacier-vault"] = config.get("glacier", "vault")
+    elif config.get("glacier", "config") != "":
+      result["glacier-config"] = config.get("glacier", "config")
+      if not config.has_option("glacier", "vault") or config.get("glacier", "vault") == "":
+        logging.error("Glacier vault not defined")
+        return None
+      result["glacier-vault"] = config.get("glacier", "vault")
 
   # Lastly, check that required software is installed and available on the path
   if result["parity"] > 0 and which("par2") is None:
