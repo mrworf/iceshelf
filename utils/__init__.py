@@ -17,6 +17,7 @@ def parseConfig(filename):
     "prepdir": "/tmp/",
     "datadir": "data/",
     "sources": {},
+    "exclude": [],
     "persuasive": True,
     "compress": True,
     "compress-force": False,
@@ -176,16 +177,28 @@ def parseConfig(filename):
     result["sources"][x] = config.get("sources", x)
 
   # Glacier options
-  if config.has_option("glacier", "config"):
-    if config.get("glacier", "config") != "" and not os.path.exists(config.get("glacier", "config")):
-      logging.error("Glacier config not found")
-      return None
-    elif config.get("glacier", "config") != "":
-      result["glacier-config"] = config.get("glacier", "config")
-      if not config.has_option("glacier", "vault") or config.get("glacier", "vault") == "":
-        logging.error("Glacier vault not defined")
+  if config.has_section("glacier"):
+    if config.has_option("glacier", "config"):
+      if config.get("glacier", "config") != "" and not os.path.exists(config.get("glacier", "config")):
+        logging.error("Glacier config not found")
         return None
-      result["glacier-vault"] = config.get("glacier", "vault")
+      elif config.get("glacier", "config") != "":
+        result["glacier-config"] = config.get("glacier", "config")
+        if not config.has_option("glacier", "vault") or config.get("glacier", "vault") == "":
+          logging.error("Glacier vault not defined")
+          return None
+        result["glacier-vault"] = config.get("glacier", "vault")
+
+  # Load exlude rules (if any)
+  if config.has_section("exclude"):
+    for x in config.options("exclude"):
+      v = config.get("exclude", x).strip().lower()
+      if v == "" :
+        logging.error("Exclude filter %s is empty", x)
+        return None
+      result["exclude"].append(v)
+  if len(result["exclude"]) == 0:
+    result["exclude"] = None
 
   # Lastly, check that required software is installed and available on the path
   if result["parity"] > 0 and which("par2") is None:

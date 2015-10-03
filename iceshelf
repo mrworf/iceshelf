@@ -72,6 +72,7 @@ if cmdline.logfile:
 else:
   logformat='%(message)s'
 if cmdline.debug:
+  loglevel=logging.DEBUG
   logformat='%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s'
 
 logging.basicConfig(stream=sys.stdout, filename=cmdline.logfile, level=loglevel, format=logformat)
@@ -87,6 +88,69 @@ def hashfile(file):
     for chunk in iter(lambda: fp.read(32768), b''):
       sha.update(chunk)
   return sha.hexdigest()
+
+def isExcluded(f):
+  if config["exclude"] is None:
+    return False
+
+  fl = f.lower()
+  for v in config["exclude"]:
+    ov=v
+    invert = False
+    fromend = False
+    contain = False
+    match = False
+    lessthan = None
+    morethan = None
+    if v[0] != "\\":
+      if v[0] == "!":
+        invert = True
+        v = v[1:]
+      if v[0] != "\\":
+        if v[0] == "*":
+          fromend = True
+          v = v[1:]
+        elif v[0] == "?":
+          contain = True
+          v = v[1:]
+        elif v[0] == "<":
+          v = v[1:]
+          if v.isdigit():
+            lessthan = int(v)
+          else:
+            logging.error("\"Less than\" exclude rule can only have digits")
+            sys.exit(2)
+        elif v[0] == ">":
+          v = v[1:]
+          if v.isdigit():
+            morethan = int(v)
+          else:
+            logging.error("\"More than\" exclude rule can only have digits")
+            sys.exit(2)
+      else: # No special filter at the start (after invert)
+        v = v[1:]
+    else: # No special filter at the start
+      v = v[1:]
+
+    if morethan or lessthan:
+      # Expensive, we need to stat
+      i = os.stat(f)
+      if morethan is not None and i.st_size > morethan:
+        match = True
+      elif lessthan is not None and i.st_size < lessthan:
+        match = True
+    else:
+      match = (fromend and fl.endswith(v)) or (contain and v in fl) or (fl.startswith(v))
+
+    if match:
+      if invert: # Special case, it matches, so stop processing, but DON'T EXCLUDE IT
+        logging.debug("Rule \"%s\" matched \"%s\", not excluded", ov, f)
+        return False
+      else: # Normal case, matched, so should be excluded
+        logging.debug("Rule \"%s\" matched \"%s\", excluded", ov, f)
+        return True
+  return False
+
 
 def shouldCompress():
   chance = int((currentOp["compressable"] * 100) / currentOp["filecount"])
@@ -152,20 +216,22 @@ def collectSources(sources):
   for name,path in sources.iteritems():
     logging.info("Processing \"%s\" (%s)", name, path)
     if os.path.isfile(path):
-      if not collectFile(path):
-        if not config["persuasive"] and not cmdline.changes:
-          return False
-        else:
-          result = False
+      if not isExcluded(path):
+        if not collectFile(path):
+          if not config["persuasive"] and not cmdline.changes:
+            return False
+          else:
+            result = False
     else:
       for root, dirs, files in os.walk(path):
         for f in files:
-          if not collectFile(os.path.join(root, f)):
-            if not config["persuasive"] and not cmdline.changes:
-              logging.debug("Not persuasive")
-              return False
-            else:
-              result = False
+          if not isExcluded(os.path.join(root, f)):
+            if not collectFile(os.path.join(root, f)):
+              if not config["persuasive"] and not cmdline.changes:
+                logging.debug("Not persuasive")
+                return False
+              else:
+                result = False
   return result
 
 def clearPrepDir():
@@ -426,7 +492,7 @@ if len(newFiles) == 0 and not gotall:
     logging.info("Done. There were files which didn't fit the maxsize limit, but they were ignored")
     sys.exit(0)
   logging.error("Can't continue, you have files bigger than maxsize")
-  sys.exit(255)
+  sys.exit(3)
 
 # Time to compress
 files = gatherData()
