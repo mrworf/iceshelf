@@ -58,8 +58,8 @@ Here's what it all does...
 
 Contains all the directories you wish to backup. Can also be individual files. You define each source by name=path/file, for example:
 
-my home movies=/mnt/storage/homemovies
-my little file=/mnt/documents/birthcertificate.pdf
+>my home movies=/mnt/storage/homemovies
+>my little file=/mnt/documents/birthcertificate.pdf
 
 *default is... no defined source*
 
@@ -92,6 +92,8 @@ Defines the maxium size of the *uncompressed* data. It will never go above this,
 This option is defined in bytes, but can also be suffixed with K, M, G or T to indicate the unit. We're using true powers of 2 here, so 1K = 1024.
 
 A value of zero or simply blank (or left out) will make it unlimited (unless "add parity" is in-effect)
+
+**If the backup didn't include all files due to exceeded max size, then iceshelf will exit with code 10. By rerunning iceshelf with the same parameters it will continue where it left of. If you do this until it exits with zero, you'll have a full backup.**
 
 *default is blank, no limit*
 
@@ -135,9 +137,75 @@ Using this option, you can add additional file extensions which will be consider
 
 *default is blank, relying only on the built-in list*
 
+### Section [exclude]
+
+This is an optional section, by default iceshelf will backup every file it finds in the source. But sometimes that's not always appreciated. This section allows you to define some exclusion rules.
+
+You define rules the same way you do sources, by name=rule, for example:
+
+>no zip files=*.zip
+>no cache=/home/user/cache
+>...
+
+In the simplest form, the rule is simply a definition of what the filename (including path) is starting with. If this matches, it's excluded. All rules are CaSe-InSeNsItIvE.
+
+#### Prefixes
+
+You can however make it more complex by using prefixes. By prefixing the rule with a star (*) the rule will match starting from the end. By prefixing with a questionmark (?) the rule will match any file containing the rule. Finally you can also use less-than or more-than (&lt; or &gt;) followed by a size to exclude by size only.
+
+But wait, there's more. You can on top of these prefixes add an additional prefix (a pre-prefix) in the shape of an exclamationmark. This will *invert* the rule and make it inclusive instead.
+
+Why would you want to do this?
+
+Consider the following:
+```
+[exclude]
+alldocs=!*.doc
+no odd dirs=/some/odd/dir/
+```
+
+In a structure like this:
+
+```
+/some/
+/some/data.txt
+/some/todo.doc
+/some/odd/dir/
+/some/odd/dir/moredata.txt
+/some/odd/dir/readme.doc
+```
+
+It will backup the following:
+
+```
+/some/data.txt
+/some/todo.doc
+/some/odd/dir/readme.doc
+```
+
+Notice how it snagged a file from inside an excluded folder? Pretty convenient. However, in order for this to work, you must consider the order of the rules. If you change the order to:
+
+```
+[exclude]
+no odd dirs=/some/odd/dir/
+alldocs=!*.doc
+```
+
+The "no odd dirs" would trigger first and the second rule would never get a chance to be evaluated. If you're having issues with the rules, consider running iceshelf with `--changes` and `--debug` to see what it's doing.
+
 ### Section [glacier]
 
-TBD - May change name completely to better work with alternate backup solutions.
+This is, believe it or not, optional. Yes, you can run iceshelf locally and have it store the backup on whatever storage that the "done dir" option is pointing at. However, should you decide to use this for glacier, you'll first of all need to make sure that glacier-cmd is installed.
+
+Once installed AND configured, you have two parameters that you need to set here to make it all work.
+
+#### config
+
+The configuration file for glacier-cmd, without this, it will not work. Even if you have defined the default config which glacier-cmd automatically uses, you still need to define it here or iceshelf will complain.
+
+#### vault
+
+The name of the vault. Iceshelf will automatically create the vault if it doesn't exist, it will also avoid doing so to minimize the operations towards the AWS to avoid extra fees. It does this by only creating/checking the existance of the vault when you run iceshelf the first time or when you change the vault name from its previous name.
 
 ### Section [security]
 
@@ -195,21 +263,19 @@ You can also provide a few options via the commandline, these are not available 
 
 `--logfile` redirects the log output to a separate file, otherwise warning and errors are shown on the console. Enabling file logging will also enable full debugging.
 
+`--find <string>` will show any file and backup which contains the `<string>`
+
+`--modified` shows files which have changed and the number of times
+
+`--show <archive>` lists all files components which makes up a particular backup. This is refering to the archive file, manifest, etc. Not the contents of the actual backup. Helpful when you need to retreive a backup and you want to know all the files.
+
 No matter what options you add, you *must* point out the configuration file, or you will not get any results.
 
 # Current state
 
-Right now, the tool will do everything except transfer the files it generates.
-Which is a bit of a letdown. But I need to verify locally that the tool works
+Right now, the tool will do everything except upload the files it generates.
+Which is a bit of a letdown,. But I need to verify locally that the tool works
 properly before I let it loose on AWS Glacier since it could get very costly.
-
-# Roadmap
-
-- Configurable loglevel
-- Some good print-outs if running from commandline
-- Quiet option to disable regular print-outs
-- Add search functions for the local database
-- Support alternative storage methods (such as cp, scp, rsync and similar)
 
 # Thoughts
 
@@ -222,7 +288,9 @@ properly before I let it loose on AWS Glacier since it could get very costly.
 
 Yes, it's vulnerable to tampering, bitrot and loss. But instead of constructing something to solve that locally, I would recommend you simply add an entry to the [sources] section of the config:
 
-> iceshelf-db=/where/i/store/the/checksum.json
+```
+iceshelf-db=/where/i/store/the/checksum.json
+```
 
 And presto, each copy of the archive will have the previous database included. Which is fine because normally the "delta manifest" option is enabled which means that you got it all covered.
 
