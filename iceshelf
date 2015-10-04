@@ -61,6 +61,7 @@ parser.add_argument('--changes', action='store_true', default=False, help="Show 
 parser.add_argument('--find', metavar='STRING', help='Searches the backup archive for files which contain string in name (case-insensitive)')
 parser.add_argument('--show', metavar='ARCHIVE', help='Shows members of a certain archive')
 parser.add_argument('--modified', action='store_true', default=False, help='Show all files which exists multiple times due to modifications')
+parser.add_argument('--full', action='store_true', default=False, help='Full backup, regardless of changes to files')
 parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
 cmdline = parser.parse_args()
 
@@ -177,7 +178,7 @@ def collectFile(filename):
   else:
     chksum = "%x-%x" % (info.st_size, info.st_mtime)
 
-  if filename not in oldFiles or oldFiles[filename]["checksum"] != chksum:
+  if filename not in oldFiles or oldFiles[filename]["checksum"] != chksum or cmdline.full:
     # When looking for changes, count files and size but don't process
     if cmdline.changes:
       currentOp["filecount"] += 1
@@ -367,7 +368,18 @@ def formatsize(size):
     return "%.1dM" % (size/1048576)
   if size >= 1024:
     return "%.1dK" % (size/1024)
-  return str(size)
+  return "%d bytes" % size
+
+def formatspeed(bps):
+  if bps >= 1099511627776:
+    return "%.1dT/s" % (bps/1099511627776)
+  if bps >= 1073741824:
+    return "%.1dG/s" % (bps/1073741824)
+  if bps >= 1048576:
+    return "%.1dM/s" % (bps/1048576)
+  if bps >= 1024:
+    return "%.1dK/s" % (bps/1024)
+  return "%d bytes" % bps
 
 # TODO: This one should actually show output as it goes...
 def glacierCommand(args):
@@ -389,10 +401,34 @@ mkvault:
 
 lsvault:
 [{"SizeInBytes": 0, "LastInventoryDate": null, "VaultARN": "arn:aws:glacier:", "VaultName": "test", "NumberOfArchives": 0, "CreationDate": "2015-10-01T06:13:47.811Z"}]
-
-
-
 """
+
+def glacierCreateVault():
+  logging.info("Creating vault \"%s\"", config["glacier-vault"])
+  result = glacierCommand(["mkvault", config["glacier-vault"]])
+  if result is None or result["code"] != 0:
+    logging.error("Failed to create vault: %s", repr(result))
+    return False
+
+  logging.info("Vault created")
+  return True
+
+def glacierUploadFiles(files, bytes):
+  logging.info("Uploading %d files (%s) to glacier, this may take a while", len(files), formatsize(bytes))
+  cmd = ["upload", config["glacier-vault"]]
+  for f in files:
+    cmd.append(os.path.join(config["prepdir"], f))
+
+  upload_start = round(time.time())
+  result = glacierCommand(cmd)
+  upload_time = max(round(time.time()) - upload_start, 1)
+
+  if result is None or "output" not in result or "Uploaded file" not in result["output"]:
+    logging.error("Failed to upload files: %s", repr(result))
+    return False
+
+  logging.info("Files uploaded @ %s", formatspeed(bytes / upload_time))
+  return True
 
 #####################
 
@@ -507,7 +543,8 @@ if config["encrypt"]:
   msg += ", encrypted"
 if config["sign"]:
   msg += ", signed"
-msg += " and ready to upload as %d files, total %s bytes" % (len(files), formatsize(sumsize(config["prepdir"], files)))
+totalbytes = sumsize(config["prepdir"], files)
+msg += " and ready to upload as %d files, total %s" % (len(files), formatsize(totalbytes))
 logging.info(msg)
 
 ##############################################################################
@@ -515,8 +552,21 @@ logging.info(msg)
 
 # We want to avoid wasting requests, so only try to
 # create vaults if we need to.
-if config["glacier-vault"] != oldVault:
-  logging.info("Glacier vault most likely not in cloud, let's create it")
+backup = False
+if config["glacier-config"] is not None:
+  if config["glacier-vault"] != oldVault or True:
+    logging.info("Glacier vault most likely not in cloud, let's create it")
+    if glacierCreateVault():
+      backup = glacierUploadFiles(files, totalbytes)
+  else:
+    backup = glacierUploadFiles(files, totalbytes)
+else:
+  logging.info("Not uploading to Glacier since config is missing")
+  backup = True
+
+if not backup:
+  logging.error("Amazon Glacier upload failed, aborting")
+  sys.exit(1)
 
 #
 ##############################################################################
