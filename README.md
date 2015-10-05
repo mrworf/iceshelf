@@ -93,7 +93,7 @@ Iceshelf needs some space for both temporary files and the local database.
 
 The folder to hold the temporary files, this needs to hold around twice the size of the maximum expected data to backed up at any time, so a ram-backed storage (such as tmpfs) is a **VERY BAD IDEA**. Especially since AWS Glacier uploads can take "a while".
 
-But, you know, because I like breaking my own rules to prove them...
+But, you know, to prove a rule...
 
 *default is `/tmp/`*
 
@@ -107,13 +107,13 @@ Where to store local data needed by iceshelf to function. Today that's a checksu
 
 Where to store the backup once it's been completed. If this is blank, no backup is stored. Also see `max keep` under `[options]` for additional configuration. By setting this option and not defining a glacier config, you can use iceshelf as a standalone backup tool without dependencies on AWS Glacier.
 
-Please note that it copies the data to the new location.
+Please note that it copies the data to the new location and only on success will it delete the original archive files.
 
 *default is blank, no storage of backups*
 
 ### Section [options]
 
-There are quite a options for you to play with. Unless otherwise specified, the options are toggled using `yes` or `no`.
+There are quite a few options for you to play with. Unless otherwise specified, the options are toggled using `yes` or `no`.
 
 #### max size
 
@@ -311,11 +311,9 @@ You can also provide a few options via the commandline, these are not available 
 
 No matter what options you add, you *must* point out the configuration file, or you will not get any results.
 
-# Current state
+# What's missing?
 
-Right now, the tool will do everything except upload the files it generates.
-Which is a bit of a letdown,. But I need to verify locally that the tool works
-properly before I let it loose on AWS Glacier since it could get very costly.
+There is as of yet no way to have iceshelf retreive the backup it created and uploaded. For now you're left to use the `glacier-cmd` tool itself to do that.
 
 # Thoughts
 
