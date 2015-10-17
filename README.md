@@ -10,6 +10,7 @@ A simple tool to allow storage of private, incremental backups using Amazon's Gl
 - Supports segmentation of upload (but not of files, yet)
 - Primarily designed for AWS Glacier
 - Tracks backups locally to help locate the file needed to restore
+- Keeps the exact directory structure of the backed up files
 - Most features can be turned on/off and customized
 
 Due to the need to work well with Glacier, any change to a file will cause it

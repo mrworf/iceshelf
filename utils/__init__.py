@@ -13,6 +13,7 @@ def parseConfig(filename):
     "parity": 0,
     "manifest": True,
     "use-sha": False,
+    "sha-type": "sha1",
     "maxsize": 0,
     "prepdir": "/tmp/",
     "datadir": "data/",
@@ -100,11 +101,14 @@ def parseConfig(filename):
   elif config.get("options", "compress").lower() == "force":
     result["compress-force"] = True
 
-  if config.get("options", "change method").lower() not in ["meta", "data"]:
+  if config.get("options", "change method").lower() not in ["meta", "data", "sha1", "sha256", "sha512"]:
     logging.error("Change method has to be data or meta")
     return None
-  elif config.get("options", "change method").lower() == "data":
+  elif config.get("options", "change method").lower() != "meta":
     result["use-sha"] = True
+    result["sha-type"] = config.get("options", "change method").lower()
+    if result["sha-type"] == "data":
+      result["sha-type"] = "sha1"
 
   if config.get("options", "incompressible"):
     result["extra-ext"] = config.get("options", "incompressible").split()
@@ -118,7 +122,7 @@ def parseConfig(filename):
 
   if config.get("options", "max size").isdigit() and config.getint("options", "max size") > 0:
     result["maxsize"] = config.getint("options", "max size")
-  elif not config.get("options", "max size").isdigit():
+  elif not config.get("options", "max size").isdigit() and config.get("options", "max size") != "":
     unit = config.get("options", "max size").lower()[-1:]
     value = config.get("options", "max size")[:-1]
     if not value.isdigit():

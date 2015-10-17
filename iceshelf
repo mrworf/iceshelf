@@ -41,6 +41,8 @@ import utils
 
 oldFiles = {}
 newFiles = {}
+allFiles = []
+deletedFiles = []
 backupSets = {}
 currentOp = {"filecount": 0, "filesize": 0, "compressable" : 0}
 oldVault = None
@@ -83,8 +85,8 @@ logging.getLogger("shutil").setLevel(logging.WARNING)
 #######################
 
 def hashfile(file):
-  print repr(hashlib.algorithms)
-  sha = hashlib.new("sha512")
+  #print repr(hashlib.algorithms)
+  sha = hashlib.new(config["sha-type"])
   with open(file, 'rb') as fp:
     for chunk in iter(lambda: fp.read(32768), b''):
       sha.update(chunk)
@@ -154,7 +156,7 @@ def isExcluded(f):
 
 
 def shouldCompress():
-  chance = int((currentOp["compressable"] * 100) / currentOp["filecount"])
+  chance = int((currentOp["compressable"] * 100) / currentOp["filesize"])
   return chance >= 20
 
 def willCompress(filename):
@@ -177,6 +179,9 @@ def collectFile(filename):
     chksum = hashfile(filename)
   else:
     chksum = "%x-%x" % (info.st_size, info.st_mtime)
+
+  # Always log all found files, so we can determine if any was deleted
+  allFiles.append(filename)
 
   if filename not in oldFiles or oldFiles[filename]["checksum"] != chksum or cmdline.full:
     # When looking for changes, count files and size but don't process
@@ -206,8 +211,8 @@ def collectFile(filename):
     currentOp["filecount"] += 1
     currentOp["filesize"] += info.st_size
     if willCompress(filename):
-      currentOp["compressable"] += 1
-    newFiles[filename] = {"checksum" : chksum, "memberof" : [config["unique"]]}
+      currentOp["compressable"] += info.st_size
+    newFiles[filename] = {"checksum" : chksum, "memberof" : [config["unique"]], "deleted": []}
 
   return True
 
@@ -277,17 +282,19 @@ def gatherData():
       logging.info("Content is not likely to compress (%d%% chance), skipping compression.", shouldCompress())
 
   # Generate archive
-  archive = shutil.make_archive(file_archive_plain, mode, config["archivedir"],logger=logging)
-  if archive is None or archive == "":
-    logging.error("Was unable to create archive")
-    return None
-  logging.info("Removing temporary copies of files")
-  deleteArchiveSource()
+  if len(newFiles):
+    archive = shutil.make_archive(file_archive_plain, mode, config["archivedir"],logger=logging)
+    if archive is None or archive == "":
+      logging.error("Was unable to create archive")
+      return None
+    logging.info("Removing temporary copies of files")
+    deleteArchiveSource()
 
   # Produce the manifest
   if config["manifest"]:
+    manifest = {"modified" : newFiles, "deleted" : deletedFiles}
     with open(file_manifest, "w") as fp:
-      json.dump(newFiles, fp)
+      json.dump(manifest, fp)
 
   # Security for the archive
   if config["encrypt"]:
@@ -504,20 +511,32 @@ if cmdline.find:
     sys.exit(1)
 
 
-logging.info("Clearing the prep directory")
+logging.info("Setting up the prep directory")
+try:
+  os.makedirs(config["prepdir"])
+except OSError as e:
+  if e.errno is not 17:
+    logging.exception("Error creating prep directory")
+    raise
+
 clearPrepDir()
 
 logging.info("Checking sources for changes")
 gotall = collectSources(config['sources'])
 
+# Figure out which files that "got away" (ie, deleted)
+for k,v in oldFiles.iteritems():
+  if v["checksum"] != "" and k not in allFiles:
+    deletedFiles.append(k)
+allFiles = None
+
 # Don't continue, just give summary and a good exit-code
 if cmdline.changes:
-  if currentOp["filecount"] > 0:
+  if currentOp["filecount"] > 0 or len(deletedFiles):
     if len(oldFiles) == 0:
-      msg = "%d files (%s) to be backed up"
+      logging.info("%d files (%s) to be backed up", currentOp["filecount"], formatsize(currentOp["filesize"]))
     else:
-      msg = "%d files (%s) has changed or been added since last backup"
-    logging.info(msg, currentOp["filecount"], formatsize(currentOp["filesize"]))
+      logging.info("%d files (%s) has changed or been added since last backup, %d has been deleted", currentOp["filecount"], formatsize(currentOp["filesize"]), len(deletedFiles))
     sys.exit(1)
   else:
     logging.info("No file(s) changed or added since last backup")
@@ -575,7 +594,21 @@ if not backup:
 for k,v in newFiles.iteritems():
   if k in oldFiles: # Don't forget any old memberships
     newFiles[k]["memberof"] += oldFiles[k]["memberof"]
+    if "deleted" in oldFiles[k]:
+      newFiles[k]["deleted"] += oldFiles[k]["deleted"]
   oldFiles[k] = newFiles[k]
+
+"""
+Deal with deleted files. We must store all deletes as an array since user can
+restore the file. We also must wipe the checksum so a restored file gets backed
+up again.
+"""
+for f in deletedFiles:
+  if "deleted" in oldFiles[f]:
+    oldFiles[f]["deleted"].append(config["unique"])
+  else:
+    oldFiles[f]["deleted"] = [config["unique"]]
+  oldFiles[f]["checksum"] = "" # Wipe checksum to make sure new copy is backed up
 
 # Add the backup to our sets...
 backupSets[config["unique"]] = files
