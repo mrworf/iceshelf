@@ -176,6 +176,12 @@ Defines how many backups to keep in the `done dir` folder. If it's zero or blank
 
 *default is zero, unlimited storage*
 
+#### prefix
+
+Optional setting, allows you to add the selected prefix to all files produced by the tool. If not set, then no prefix is added.
+
+*default is no prefix*
+
 ### Section [exclude]
 
 This is an optional section, by default iceshelf will backup every file it finds in the source. But sometimes that's not always appreciated. This section allows you to define some exclusion rules.

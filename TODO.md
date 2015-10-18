@@ -1,6 +1,5 @@
 # TODO
 
-- Add prefix option for filename
 - improve --modified output (min, max,etc)
 - add warning if one and the same file changes a lot
 - be more specific in manifest, ie, added, modified, deleted

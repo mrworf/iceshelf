@@ -28,6 +28,7 @@ def parseConfig(filename):
     "maxkeep": 0,
     "glacier-config" : None,
     "glacier-vault" : None,
+    "prefix" : "",
   }
   config = ConfigParser.ConfigParser()
   # Some sane defaults
@@ -37,6 +38,7 @@ def parseConfig(filename):
   config.add_section("paths")
   config.set("paths", "prep dir", "/tmp/")
   config.set("paths", "data dir", "data/")
+  config.set("paths", "prefix", "")
 
   config.add_section("options")
   config.set("options", "max size", "0")
@@ -169,6 +171,9 @@ def parseConfig(filename):
     return None
   elif config.get("paths", "done dir") != "":
     result["donedir"] = config.get("paths", "done dir")
+
+  if config.has_option("options", "prefix") and config.get("options", "prefix") != "":
+    result["prefix"] = config.get("options", "prefix")
 
   # Check that all sources are either directories or files
   for x in config.options("sources"):

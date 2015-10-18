@@ -269,9 +269,9 @@ def generateParity(filename, level):
 
 def gatherData():
   mode = "tar"
-  file_archive_plain = os.path.join(config["prepdir"], config["unique"])
+  file_archive_plain = os.path.join(config["prepdir"], config["prefix"] + config["unique"])
   file_archive = file_archive_plain + ".tar"
-  file_manifest = os.path.join(config["prepdir"], config["unique"]) + ".json"
+  file_manifest = os.path.join(config["prepdir"], config["prefix"] + config["unique"]) + ".json"
   gpg = gnupg.GPG(options=['-z', '0']) # Do not use GPG compression since we use bzip2
 
   if config["compress"]:
