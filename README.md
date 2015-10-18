@@ -130,9 +130,11 @@ A value of zero or simply blank (or left out) will make it unlimited (unless `ad
 
 #### change method
 
-How to detect changes. You have two modes, either `meta` or `data`. Meta uses the combination of modification time and file size. If either (or both) change, it's considered changed. This is very fast and effecient but could in theory miss changes. By using `data`, iceshelf will use sha512 to generate a hash of the data which is then compared. This is more secure and will detect more or less all changes, *but*, it's also more computationally expensive and *will* make the process slower. It also adds a substantial amount of meta data due to larger checksums.
+How to detect changes. You have a few different modes, the most common two are `meta` or `data`. Meta uses the combination of modification time and file size. If either (or both) change, it's considered changed. This is very fast and effecient but could in theory miss changes. By using `data`, iceshelf will use sha1 to generate a hash of the data which is then compared. This is more secure and will detect more or less all changes, *but*, it's also more computationally expensive and *will* make the process slower. While sha1 usually is good enough, you can also, instead of the two common options, specify `sha1`, `sha256` or `sha512` if you feel it is warranted.
 
-*default is `meta`*
+Note that switching between various methods will cause the next backup to be a full backup since the checksums will not match. Also, using the `meta` option is mutually exclusive with the upcoming rename/move/copy feature (see TODO.md).
+
+*default is `data`*
 
 #### delta manifest
 
