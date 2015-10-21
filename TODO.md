@@ -2,7 +2,7 @@
 
 - Add support for restoring backups
 
-- improve --modified output (min, max,etc)
+- improve --modified output (min, max, etc)
 - add warning if one and the same file changes a lot
 - Detect duplication when using sha method (impossible with meta due to lack of details)
 - Cleanup parameters

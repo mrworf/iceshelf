@@ -30,14 +30,17 @@ import logging
 import argparse
 import sys
 import os.path
-import hashlib
 import json
 from datetime import datetime
 import time
 import shutil
 import gnupg
 from subprocess import Popen, PIPE
-import utils
+
+import configuration
+import fileutils
+import helper
+import glacier
 
 oldFiles = {}
 newFiles = {}
@@ -85,76 +88,6 @@ logging.getLogger("shutil").setLevel(logging.WARNING)
 
 #######################
 
-def hashfile(file):
-  sha = hashlib.new(config["sha-type"])
-  with open(file, 'rb') as fp:
-    for chunk in iter(lambda: fp.read(32768), b''):
-      sha.update(chunk)
-  return sha.hexdigest()
-
-def isExcluded(f):
-  if config["exclude"] is None:
-    return False
-
-  fl = f.lower()
-  for v in config["exclude"]:
-    ov=v
-    invert = False
-    fromend = False
-    contain = False
-    match = False
-    lessthan = None
-    morethan = None
-    if v[0] != "\\":
-      if v[0] == "!":
-        invert = True
-        v = v[1:]
-      if v[0] != "\\":
-        if v[0] == "*":
-          fromend = True
-          v = v[1:]
-        elif v[0] == "?":
-          contain = True
-          v = v[1:]
-        elif v[0] == "<":
-          v = v[1:]
-          if v.isdigit():
-            lessthan = int(v)
-          else:
-            logging.error("\"Less than\" exclude rule can only have digits")
-            sys.exit(2)
-        elif v[0] == ">":
-          v = v[1:]
-          if v.isdigit():
-            morethan = int(v)
-          else:
-            logging.error("\"More than\" exclude rule can only have digits")
-            sys.exit(2)
-      else: # No special filter at the start (after invert)
-        v = v[1:]
-    else: # No special filter at the start
-      v = v[1:]
-
-    if morethan or lessthan:
-      # Expensive, we need to stat
-      i = os.stat(f)
-      if morethan is not None and i.st_size > morethan:
-        match = True
-      elif lessthan is not None and i.st_size < lessthan:
-        match = True
-    else:
-      match = (fromend and fl.endswith(v)) or (contain and v in fl) or (fl.startswith(v))
-
-    if match:
-      if invert: # Special case, it matches, so stop processing, but DON'T EXCLUDE IT
-        logging.debug("Rule \"%s\" matched \"%s\", not excluded", ov, f)
-        return False
-      else: # Normal case, matched, so should be excluded
-        logging.debug("Rule \"%s\" matched \"%s\", excluded", ov, f)
-        return True
-  return False
-
-
 def shouldCompress():
   chance = int((currentOp["compressable"] * 100) / currentOp["filesize"])
   return chance >= 20
@@ -169,14 +102,14 @@ def collectFile(filename):
   maxsize = config["maxsize"]
 
   if maxsize > 0 and info.st_size > maxsize:
-    logging.warn("File \"%s\" is too big (%s) to ever fit inside defined max size of %s", filename, formatsize(info.st_size), formatsize(config["maxsize"]))
+    logging.warn("File \"%s\" is too big (%s) to ever fit inside defined max size of %s", filename, helper.formatSize(info.st_size), helper.formatSize(config["maxsize"]))
     return False
 
   if maxsize > 0 and (currentOp["filesize"] + info.st_size) > maxsize and not cmdline.changes:
     return False
 
   if config["use-sha"]:
-    chksum = hashfile(filename)
+    chksum = fileutils.hashFile(filename, config["sha-type"])
   else:
     chksum = "%x-%x" % (info.st_size, info.st_mtime)
 
@@ -208,7 +141,7 @@ def collectSources(sources):
   for name,path in sources.iteritems():
     logging.info("Processing \"%s\" (%s)", name, path)
     if os.path.isfile(path):
-      if not isExcluded(path):
+      if not configuration.isExcluded(path):
         if not collectFile(path):
           if not config["persuasive"] and not cmdline.changes:
             return False
@@ -217,7 +150,7 @@ def collectSources(sources):
     else:
       for root, dirs, files in os.walk(path):
         for f in files:
-          if not isExcluded(os.path.join(root, f)):
+          if not configuration.isExcluded(os.path.join(root, f)):
             if not collectFile(os.path.join(root, f)):
               if not config["persuasive"] and not cmdline.changes:
                 logging.debug("Not persuasive")
@@ -226,32 +159,6 @@ def collectSources(sources):
                 result = False
   return result
 
-def clearPrepDir():
-  for root, dirs, files in os.walk(config["prepdir"], topdown=False):
-    for name in files:
-      os.remove(os.path.join(root, name))
-    for name in dirs:
-      os.rmdir(os.path.join(root, name))
-
-def deleteArchiveSource():
-  for root, dirs, files in os.walk(config["archivedir"], topdown=False):
-    for name in files:
-      os.remove(os.path.join(root, name))
-    for name in dirs:
-      os.rmdir(os.path.join(root, name))
-  os.rmdir(config["archivedir"])
-
-def generateParity(filename, level):
-  if level is 0:
-    return False
-  cmd = ["par2", "create", "-r"+str(level), filename]
-  p = Popen(cmd, stdout=PIPE, stderr=PIPE)
-  out, err = p.communicate()
-  if p.returncode != 0:
-    print "Output: " + out
-    print "Error : " + err
-    print "Code  : " + str(p.returncode)
-  return p.returncode == 0
 
 def gatherData():
   mode = "tar"
@@ -271,7 +178,7 @@ def gatherData():
   for k in newFiles:
     if k not in movedFiles:
       # Make sure path exists, then copy it...
-      destfile = os.path.join(config["archivedir"], k)
+      destfile = config["archivedir"] + "/" + k
       destdir = os.path.dirname(destfile)
       if not os.path.isdir(destdir):
         try:
@@ -282,7 +189,6 @@ def gatherData():
             raise
 
       # Copy the files into its new location
-      #print "Copy \"%s\" to \"%s\"" % (filename, destfile)
       shutil.copy2(k, destfile)
 
   # Generate archive if we have any files
@@ -292,7 +198,7 @@ def gatherData():
       logging.error("Was unable to create archive")
       return None
     logging.info("Removing temporary copies of files")
-    deleteArchiveSource()
+    fileutils.deleteTree(config["archivedir"], True)
 
   # Produce the manifest
   if config["manifest"]:
@@ -339,7 +245,7 @@ def gatherData():
       file_archive += ".sig"
 
   # Add parity if requested
-  if config["parity"] > 0 and not generateParity(file_archive, config["parity"]):
+  if config["parity"] > 0 and not fileutils.generateParity(file_archive, config["parity"]):
       logging.error("Unable to create PAR2 file for this archive")
       return None
 
@@ -374,86 +280,10 @@ def gatherData():
             os.remove(f)
   return os.listdir(config["prepdir"])
 
-def sumsize(path, files):
-  result = 0
-  for f in files:
-    result += os.path.getsize(os.path.join(path, f))
-  return result
-
-def formatsize(size):
-  if size >= 1099511627776:
-    return "%.1dT" % (size/1099511627776)
-  if size >= 1073741824:
-    return "%.1dG" % (size/1073741824)
-  if size >= 1048576:
-    return "%.1dM" % (size/1048576)
-  if size >= 1024:
-    return "%.1dK" % (size/1024)
-  return "%d bytes" % size
-
-def formatspeed(bps):
-  if bps >= 1099511627776:
-    return "%.1dT/s" % (bps/1099511627776)
-  if bps >= 1073741824:
-    return "%.1dG/s" % (bps/1073741824)
-  if bps >= 1048576:
-    return "%.1dM/s" % (bps/1048576)
-  if bps >= 1024:
-    return "%.1dK/s" % (bps/1024)
-  return "%d bytes" % bps
-
-# TODO: This one should actually show output as it goes...
-def glacierCommand(args):
-  if config["glacier-config"] is None:
-    logging.error("glacierCommand() called without proper settings")
-    return None
-
-  cmd = ["glacier-cmd", "-c", config["glacier-config"], "--output", "json"]
-  cmd += args
-  p = Popen(cmd, stdout=PIPE, stderr=PIPE)
-  out, err = p.communicate()
-  return {"code" : p.returncode, "output" : out, "error" : err }
-"""
-upload:
-{'output': '{"Created archive with ID": "", "Archive SHA256 tree hash": "", "Uploaded file": ""}\n', 'code': 0, 'error': ''}
-
-mkvault:
-{"RequestId": "", "Location": "/5555555555/vaults/test"}
-
-lsvault:
-[{"SizeInBytes": 0, "LastInventoryDate": null, "VaultARN": "arn:aws:glacier:", "VaultName": "test", "NumberOfArchives": 0, "CreationDate": "2015-10-01T06:13:47.811Z"}]
-"""
-
-def glacierCreateVault():
-  logging.info("Creating vault \"%s\"", config["glacier-vault"])
-  result = glacierCommand(["mkvault", config["glacier-vault"]])
-  if result is None or result["code"] != 0:
-    logging.error("Failed to create vault: %s", repr(result))
-    return False
-
-  logging.info("Vault created")
-  return True
-
-def glacierUploadFiles(files, bytes):
-  logging.info("Uploading %d files (%s) to glacier, this may take a while", len(files), formatsize(bytes))
-  cmd = ["upload", config["glacier-vault"]]
-  for f in files:
-    cmd.append(os.path.join(config["prepdir"], f))
-
-  upload_start = round(time.time())
-  result = glacierCommand(cmd)
-  upload_time = max(round(time.time()) - upload_start, 1)
-
-  if result is None or "output" not in result or "Uploaded file" not in result["output"]:
-    logging.error("Failed to upload files: %s", repr(result))
-    return False
-
-  logging.info("Files uploaded @ %s", formatspeed(bytes / upload_time))
-  return True
 
 #####################
 
-config = utils.parseConfig(cmdline.config)
+config = configuration.parse(cmdline.config)
 if config is None:
   logging.error("Configuration is broken, please check %s" % cmdline.config)
   sys.exit(1)
@@ -533,7 +363,7 @@ except OSError as e:
     logging.exception("Error creating prep directory")
     raise
 
-clearPrepDir()
+fileutils.deleteTree(config["prepdir"])
 
 logging.info("Checking sources for changes")
 gotall = collectSources(config['sources'])
@@ -548,9 +378,9 @@ allFiles = None
 if cmdline.changes:
   if currentOp["filecount"] > 0 or len(deletedFiles):
     if len(oldFiles) == 0:
-      logging.info("%d files (%s) to be backed up", currentOp["filecount"], formatsize(currentOp["filesize"]))
+      logging.info("%d files (%s) to be backed up", currentOp["filecount"], helper.formatSize(currentOp["filesize"]))
     else:
-      logging.info("%d files (%s) has changed or been added since last backup, %d has been deleted", currentOp["filecount"], formatsize(currentOp["filesize"]), len(deletedFiles))
+      logging.info("%d files (%s) has changed or been added since last backup, %d has been deleted", currentOp["filecount"], helper.formatSize(currentOp["filesize"]), len(deletedFiles))
     sys.exit(1)
   else:
     logging.info("No file(s) changed or added since last backup")
@@ -582,15 +412,15 @@ if files is None:
   logging.error("Failed to gather all data and compress it.")
   sys.exit(2)
 
-msg = "%d files (%s bytes) gathered" % (currentOp["filecount"], formatsize(currentOp["filesize"]))
+msg = "%d files (%s bytes) gathered" % (currentOp["filecount"], helper.formatSize(currentOp["filesize"]))
 if config["compress"] and (shouldCompress() or config["compress-force"]):
   msg += ", compressed"
 if config["encrypt"]:
   msg += ", encrypted"
 if config["sign"]:
   msg += ", signed"
-totalbytes = sumsize(config["prepdir"], files)
-msg += " and ready to upload as %d files, total %s" % (len(files), formatsize(totalbytes))
+totalbytes = fileutils.sumSize(config["prepdir"], files)
+msg += " and ready to upload as %d files, total %s" % (len(files), helper.formatSize(totalbytes))
 logging.info(msg)
 
 ##############################################################################
@@ -602,10 +432,10 @@ backup = False
 if config["glacier-config"] is not None:
   if config["glacier-vault"] != oldVault or True:
     logging.info("Glacier vault most likely not in cloud, let's create it")
-    if glacierCreateVault():
-      backup = glacierUploadFiles(files, totalbytes)
+    if glacier.createVault(config):
+      backup = glacier.uploadFiles(config, files, totalbytes)
   else:
-    backup = glacierUploadFiles(files, totalbytes)
+    backup = glacier.uploadFiles(config, files, totalbytes)
 else:
   logging.info("Not uploading to Glacier since config is missing")
   backup = True
