@@ -29,6 +29,7 @@ def parseConfig(filename):
     "glacier-config" : None,
     "glacier-vault" : None,
     "prefix" : "",
+    "detect-move": False,
   }
   config = ConfigParser.ConfigParser()
   # Some sane defaults
@@ -47,6 +48,7 @@ def parseConfig(filename):
   config.set("options", "compress", "yes")
   config.set("options", "incompressible", "")
   config.set("options", "persuasive", "no")
+  config.set("options", "detect move", "no")
 
   config.add_section("glacier")
   config.set("glacier", "config", "")
@@ -121,6 +123,16 @@ def parseConfig(filename):
     logging.error("Max keep should be a number or empty")
     return None
 
+  if config.has_option("options", "prefix") and config.get("options", "prefix") != "":
+    result["prefix"] = config.get("options", "prefix")
+
+  if config.get("options", "detect move").lower() not in ["yes", "no"]:
+    logging.error("detect move has to be yes or no")
+  elif config.get("options", "detect move").lower() == "yes":
+    if not result["use-sha"]:
+      logging.error("You cannot use \"detect move\" with \"change method\" set to \"meta\"")
+      return None
+    result["detect-move"] = True
 
   if config.get("options", "max size").isdigit() and config.getint("options", "max size") > 0:
     result["maxsize"] = config.getint("options", "max size")
@@ -171,9 +183,6 @@ def parseConfig(filename):
     return None
   elif config.get("paths", "done dir") != "":
     result["donedir"] = config.get("paths", "done dir")
-
-  if config.has_option("options", "prefix") and config.get("options", "prefix") != "":
-    result["prefix"] = config.get("options", "prefix")
 
   # Check that all sources are either directories or files
   for x in config.options("sources"):

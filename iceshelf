@@ -42,6 +42,7 @@ import utils
 oldFiles = {}
 newFiles = {}
 allFiles = []
+movedFiles = {}
 deletedFiles = []
 backupSets = {}
 currentOp = {"filecount": 0, "filesize": 0, "compressable" : 0}
@@ -85,7 +86,6 @@ logging.getLogger("shutil").setLevel(logging.WARNING)
 #######################
 
 def hashfile(file):
-  #print repr(hashlib.algorithms)
   sha = hashlib.new(config["sha-type"])
   with open(file, 'rb') as fp:
     for chunk in iter(lambda: fp.read(32768), b''):
@@ -194,20 +194,6 @@ def collectFile(filename):
         logging.info("\"%s\" changed from last backup", filename)
       return False
 
-    # Make sure path exists, then copy it...
-    destfile = os.path.join(config["archivedir"], filename[1:])
-    destdir = os.path.dirname(destfile)
-    if not os.path.isdir(destdir):
-      try:
-        os.makedirs(destdir)
-      except OSError as e:
-        if e.errno is not 17:
-          logging.exception("Error creating directory structure")
-          raise
-
-    # Copy the files into its new location
-    shutil.copy2(filename, destfile)
-
     currentOp["filecount"] += 1
     currentOp["filesize"] += info.st_size
     if willCompress(filename):
@@ -281,8 +267,26 @@ def gatherData():
     else:
       logging.info("Content is not likely to compress (%d%% chance), skipping compression.", shouldCompress())
 
-  # Generate archive
-  if len(newFiles):
+  # Copy the files...
+  for k in newFiles:
+    if k not in movedFiles:
+      # Make sure path exists, then copy it...
+      destfile = os.path.join(config["archivedir"], k)
+      destdir = os.path.dirname(destfile)
+      if not os.path.isdir(destdir):
+        try:
+          os.makedirs(destdir)
+        except OSError as e:
+          if e.errno is not 17:
+            logging.exception("Error creating directory structure")
+            raise
+
+      # Copy the files into its new location
+      #print "Copy \"%s\" to \"%s\"" % (filename, destfile)
+      shutil.copy2(k, destfile)
+
+  # Generate archive if we have any files
+  if (len(newFiles) - len(movedFiles)):
     archive = shutil.make_archive(file_archive_plain, mode, config["archivedir"],logger=logging)
     if archive is None or archive == "":
       logging.error("Was unable to create archive")
@@ -292,7 +296,17 @@ def gatherData():
 
   # Produce the manifest
   if config["manifest"]:
-    manifest = {"modified" : newFiles, "deleted" : deletedFiles}
+    tmp1 = {}
+    tmp2 = []
+
+    for k,v in newFiles.iteritems():
+      if k not in movedFiles:
+        tmp1[k] = v
+    for k in deletedFiles:
+      if k not in movedFiles.values():
+        tmp2.append(k)
+
+    manifest = {"modified" : tmp1, "deleted" : tmp2, "moved" : movedFiles}
     with open(file_manifest, "w") as fp:
       json.dump(manifest, fp)
 
@@ -549,6 +563,19 @@ if len(newFiles) == 0 and not gotall:
   logging.error("Can't continue, you have files bigger than maxsize")
   sys.exit(3)
 
+"""
+Figure out if any file was renamed, this is easily detected since a deleted file
+will have a new file with the same checksum. This does not work with meta data
+"""
+if config["use-sha"] and config["detect-move"]:
+  for f in deletedFiles:
+    chksum = oldFiles[f]["checksum"]
+    for k,v in newFiles.iteritems():
+      if v["checksum"] == chksum:
+        movedFiles[k] = f # new place = old place
+        #logging.info("File \"%s\" has been moved to \"%s\"", f, k)
+        break
+
 # Time to compress
 files = gatherData()
 if files is None:
@@ -615,7 +642,7 @@ backupSets[config["unique"]] = files
 
 logging.info("Saving the new checksum")
 saveData = {
-  "version" : "1.0.0",
+  "version" : "1.0.1",
   "timestamp" : time.time(),
   "dataset" : oldFiles,
   "backups" : backupSets,
