@@ -189,7 +189,14 @@ def gatherData():
             raise
 
       # Copy the files into its new location
-      shutil.copy2(k, destfile)
+      try:
+        shutil.copy2(k, destfile)
+      except IOError as e:
+        if e.errno is 2:
+          logging.warning("File \"%s\" was removed after initial scan", k)
+        else:
+          logging.exception("Error copying file \"%s\"", k)
+          raise
 
   # Generate archive if we have any files
   if (len(newFiles) - len(movedFiles)):
