@@ -67,7 +67,32 @@ In order to be able to run this, you need a few other parts installed.
   Ubuntu comes with a version, but unfortunately it's too old. You should install this using the `pip` tool to make sure you get a current version.
 - par2 - Parity tool
 - glacier-cmd - The tool which interacts with Glacier
-  This must be downloaded and installed manually, see
+  This must be downloaded and installed manually, see https://github.com/uskudnik/amazon-glacier-cmd-interface
+
+### Installing on Ubuntu
+
+This is the simple version which points out what commands to run. Please consider reading through before running since it will install things (such as pip) and place code (like glacier) in a manner which you might not agree with. It is based on what and how I installed the requirements on a Ubuntu LTS 14 release.
+
+1. GPG
+  Easy enough, ubuntu comes with it pre-installed
+2. GnuPG (requires PIP)
+  ``
+  sudo apt-get install python-dev
+  sudo apt-get install python-pip
+  sudo pip install gnupg
+  ``
+3. PAR2 for parity
+  ``
+  sudo apt-get install par2
+  ``
+
+4. Glacier
+  ``
+  cd
+  git clone https://github.com/uskudnik/amazon-glacier-cmd-interface.git
+  cd amazon-glacier-cmd-interface/
+  sudo python setup.py install
+  ``
 
 ## Configuration file
 
