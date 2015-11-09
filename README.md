@@ -76,23 +76,23 @@ This is the simple version which points out what commands to run. Please conside
 1. GPG
   Easy enough, ubuntu comes with it pre-installed
 2. GnuPG (requires PIP)
-  ``
+  ```
   sudo apt-get install python-dev
   sudo apt-get install python-pip
   sudo pip install gnupg
-  ``
+  ```
 3. PAR2 for parity
-  ``
+  ```
   sudo apt-get install par2
-  ``
+  ```
 
 4. Glacier
-  ``
+  ```
   cd
   git clone https://github.com/uskudnik/amazon-glacier-cmd-interface.git
   cd amazon-glacier-cmd-interface/
   sudo python setup.py install
-  ``
+  ```
 
 ## Configuration file
 
