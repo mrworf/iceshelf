@@ -211,11 +211,21 @@ def parse(filename):
   # Load exlude rules (if any)
   if config.has_section("exclude"):
     for x in config.options("exclude"):
-      v = config.get("exclude", x).strip().lower()
+      v = config.get("exclude", x).strip()
       if v == "" :
         logging.error("Exclude filter %s is empty", x)
         return None
-      setting["exclude"].append(v)
+      if v[0] == '|':
+        logging.debug("Loading external exclusion rules from %s", v[1:])
+        try:
+          with open(v[1:], "r") as f:
+            for line in f:
+              setting["exclude"].append(line.strip())
+        except:
+          logging.exception("Error loading external exclusion file \"%s\"", v[1:])
+          raise
+      else:
+        setting["exclude"].append(v)
   if len(setting["exclude"]) == 0:
     setting["exclude"] = None
 
