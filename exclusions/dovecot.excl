@@ -1,0 +1,8 @@
+# This exclusion file will ignore all unnecessary files in dovecot when
+# performing a backup of your mail.
+#
+?dovecot.index
+?dovecot.list.index
+*dovecot-uidlist
+*dovecot-keywords
+*.dovecot.lda-dupes
