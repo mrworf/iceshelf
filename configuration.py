@@ -220,7 +220,15 @@ def parse(filename):
         try:
           with open(v[1:], "r") as f:
             for line in f:
-              setting["exclude"].append(line.strip())
+              line = line.strip()
+              if len(line) == 0:
+                continue
+              if line[0] == '|':
+                logging.error("Cannot reference external exclusion files from an external exclusion file (%s): %s", v[1:], line)
+                return None
+              elif line[0] == '#':
+                continue
+              setting["exclude"].append(line)
         except:
           logging.exception("Error loading external exclusion file \"%s\"", v[1:])
           raise
