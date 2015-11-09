@@ -8,6 +8,6 @@ def formatSpeed(bps):
 def formatNumber(number, units):
   i = 0
   while number >= 1024 and i < len(units):
-    number /= 1024.0
+    number /= 1024
     i += 1
   return "%.1d%s" % (number, units[i])
