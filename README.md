@@ -265,6 +265,15 @@ alldocs=!*.doc
 
 The `no odd dirs` would trigger first and the second rule would never get a chance to be evaluated. If you're having issues with the rules, consider running iceshelf with `--changes` and `--debug` to see what it's doing.
 
+Finally, you can also reference external files containing exclusion rules. This makes it easy to use readymade rules for various items you'd like to backup. Including a external rule file is done by prefixing the filename with a pipe ```|``` character. For example, to include "my-rules.excl", you'd write the following:
+
+```
+[exclude]
+my rules=|/some/path/my-rules.excl
+```
+
+What essentially happens is that the "my rules" line is replaced with all the rules defined inside my-rules.excl. The only restriction of the external rules reference is that you are not able to reference other external rule files from an external rule file (yes, no recursion for you).
+
 ### Section [glacier]
 
 This is, believe it or not, optional. Yes, you can run iceshelf locally and have it store the backup on whatever storage that the `done dir` option is pointing at. However, should you decide to use this for glacier, you'll first of all need to make sure that glacier-cmd is installed.
