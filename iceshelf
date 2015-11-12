@@ -117,16 +117,6 @@ def collectFile(filename):
   allFiles.append(filename)
 
   if filename not in oldFiles or oldFiles[filename]["checksum"] != chksum or cmdline.full:
-    # When looking for changes, count files and size but don't process
-    if cmdline.changes:
-      currentOp["filecount"] += 1
-      currentOp["filesize"] += info.st_size
-      if filename not in oldFiles:
-        logging.info("\"%s\" missing from backup", filename)
-      else:
-        logging.info("\"%s\" changed from last backup", filename)
-      return False
-
     currentOp["filecount"] += 1
     currentOp["filesize"] += info.st_size
     if willCompress(filename):
@@ -412,6 +402,23 @@ if config["use-sha"] and config["detect-move"]:
         movedFiles[k] = f # new place = old place
         #logging.info("File \"%s\" has been moved to \"%s\"", f, k)
         break
+
+# When looking for changes, only provide a list of changes + summary
+if cmdline.changes:
+  for k in deletedFiles:
+    if k not movedFiles:
+      logging.info("\"%s\" was deleted", k)
+  for k in newFiles:
+    if k in movedFiles:
+      logging.info("\"%s\" was renamed/moved", k)
+    elif k not in oldFiles:
+      logging.info("\"%s\" is new", k)
+    else:
+      logging.info("\"%s\" changed", k)
+
+  if len(newFiles) or len(deletedFiles):
+    sys.exit(100)
+  sys.exit(0)
 
 # Time to compress
 files = gatherData()
