@@ -406,7 +406,7 @@ if config["use-sha"] and config["detect-move"]:
 # When looking for changes, only provide a list of changes + summary
 if cmdline.changes:
   for k in deletedFiles:
-    if k not movedFiles:
+    if k not in movedFiles:
       logging.info("\"%s\" was deleted", k)
   for k in newFiles:
     if k in movedFiles:
