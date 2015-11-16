@@ -365,9 +365,14 @@ fileutils.deleteTree(config["prepdir"])
 logging.info("Checking sources for changes")
 gotall = collectSources(config['sources'])
 
+logging.debug("Processing file structure changes")
 # Figure out which files that "got away" (ie, deleted)
-for k,v in oldFiles.iteritems():
-  if v["checksum"] != "" and k not in allFiles:
+# TODO: FIX! VERY INEFFICIENT!
+#for k,v in oldFiles.iteritems():
+#  if v["checksum"] != "" and k not in allFiles:
+#    deletedFiles.append(k)
+for k in oldFiles:
+  if oldFiles[k]["checksum"] != "" and k not in allFiles:
     deletedFiles.append(k)
 allFiles = None
 
