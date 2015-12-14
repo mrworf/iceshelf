@@ -108,10 +108,7 @@ def collectFile(filename):
   if maxsize > 0 and (currentOp["filesize"] + info.st_size) > maxsize and not cmdline.changes:
     return False
 
-  if config["use-sha"]:
-    chksum = fileutils.hashFile(filename, config["sha-type"])
-  else:
-    chksum = "%x-%x" % (info.st_size, info.st_mtime)
+  chksum = fileutils.hashFile(filename, config["sha-type"])
 
   # Always log all found files, so we can determine if any was deleted
   allFiles.append(filename)
@@ -399,7 +396,7 @@ if len(newFiles) == 0 and not gotall:
 Figure out if any file was renamed, this is easily detected since a deleted file
 will have a new file with the same checksum. This does not work with meta data
 """
-if config["use-sha"] and config["detect-move"]:
+if config["detect-move"]:
   for f in deletedFiles:
     chksum = oldFiles[f]["checksum"]
     for k,v in newFiles.iteritems():

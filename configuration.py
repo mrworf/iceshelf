@@ -11,7 +11,7 @@ setting = {
   "sign-pw": None,
   "parity": 0,
   "manifest": True,
-  "use-sha": False,
+  "use-sha": True,
   "sha-type": "sha1",
   "maxsize": 0,
   "prepdir": "/tmp/",
@@ -106,10 +106,10 @@ def parse(filename):
   elif config.get("options", "compress").lower() == "force":
     setting["compress-force"] = True
 
-  if config.get("options", "change method").lower() not in ["meta", "data", "sha1", "sha256", "sha512"]:
-    logging.error("Change method has to be data or meta")
+  if config.get("options", "change method").lower() not in [ "data", "sha1", "sha256", "sha512"]:
+    logging.error("Change method has to be data, sha1, sha256 or sha512 (meta is deprecated)")
     return None
-  elif config.get("options", "change method").lower() != "meta":
+  else:
     setting["use-sha"] = True
     setting["sha-type"] = config.get("options", "change method").lower()
     if setting["sha-type"] == "data":

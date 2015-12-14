@@ -1,6 +1,6 @@
 # TODO
 
-This file details what my goals are for this project, both in the short term and in the long term. It also details items which I intend to do but doesn't have a clear time plan. 
+This file details what my goals are for this project, both in the short term and in the long term. It also details items which I intend to do but doesn't have a clear time plan.
 
 The list is intentionally kept vague to avoid over-promising and under-delivering :)
 
@@ -11,6 +11,7 @@ The list is intentionally kept vague to avoid over-promising and under-deliverin
 
 ## Long term
 - Detect duplication when using sha method (impossible with meta due to lack of details)
+- Move validation of exclusion rules to configuration parsing instead of during backup
 
 ## Anytime
 - Cleanup parameters
@@ -18,6 +19,7 @@ The list is intentionally kept vague to avoid over-promising and under-deliverin
 - improve --modified output (min, max, etc)
 - add warning if one and the same file changes a lot
 - Add piece about "why encrypt" to README.md (ie, why I am so adamant about it). See second section in this file for current links about security until I get around to putting it in the README.md
+- Redo the "?bla" rule into a "*bla*" which makes more sense... But do we also need to support *bl*a* then? Probably
 
 # Why use iceshelf with encryption?
 

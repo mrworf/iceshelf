@@ -155,9 +155,9 @@ A value of zero or simply blank (or left out) will make it unlimited (unless `ad
 
 #### change method
 
-How to detect changes. You have a few different modes, the most common two are `meta` or `data`. Meta uses the combination of modification time and file size. If either (or both) change, it's considered changed. This is very fast and effecient but could in theory miss changes. By using `data`, iceshelf will use sha1 to generate a hash of the data which is then compared. This is more secure and will detect more or less all changes, *but*, it's also more computationally expensive and *will* make the process slower. While sha1 usually is good enough, you can also, instead of the two common options, specify `sha1`, `sha256` or `sha512` if you feel it is warranted.
+How to detect changes. You have a few different modes, the most common is `data`, but also `sha1` (same as data actually), `sha256` and `sha512` works. Iceshelf uses hashes of the data which is then compared to see changes. While sha1 usually is good enough, you can also specify `sha256` or `sha512` if you feel it is warranted.
 
-Note that switching between various methods will cause the next backup to be a full backup since the checksums will not match. Also, using the `meta` option is mutually exclusive with the upcoming rename/move/copy feature (see TODO.md).
+Note that switching between various methods will cause the next backup to be a full backup since the checksums will not match.
 
 *default is `data`*
 
@@ -166,6 +166,10 @@ Note that switching between various methods will cause the next backup to be a f
 Save a delta manifest with the archive as separate file. This is essentially a JSON file with the filenames and their checksums. Handy if you ever loose the entire local database since you can download all your manifests in order to locate the missing file.
 
 Please keep in-mind that this is a *delta* manifest, it does not contain anything but the files in this backup, there are no references to any other files from previous backups.
+There are a total of three settings for this option:
+ - Yes: Generates the delta manifest and stores it as a separate file
+ - No: Does not generate a delta manifest
+ - Encrypt: Generates the delta manifest and encrypts it with the same key as the backup archive. If signature key is provided, it will also be signed. Keep in mind that this setting will cause the backup to fail should you not provide an encryption key in the `[security]` section.
 
 *default is `yes`*
 
