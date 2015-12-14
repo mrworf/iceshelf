@@ -31,6 +31,23 @@ setting = {
   "detect-move": False,
 }
 
+def getVersion():
+  return [1,1,0]
+
+def isCompatible(version):
+  """ 
+  Checks if the version (x.y.z) is compatible with ours
+  The general rule is that as long as only Z changes,
+  it remains compatible.
+  """
+  try:
+    if len(version) is not 3:
+      return False
+    c = getVersion()
+    return c[0] == version[0] and c[1] == version[1] and c[2] >= version[2]
+  except:
+    return False
+
 def parse(filename):
   config = ConfigParser.ConfigParser()
   # Some sane defaults

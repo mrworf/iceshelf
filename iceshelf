@@ -44,9 +44,9 @@ import glacier
 
 oldFiles = {}
 newFiles = {}
-allFiles = []
+shaFiles = {}
 movedFiles = {}
-deletedFiles = []
+deletedFiles = {}
 backupSets = {}
 currentOp = {"filecount": 0, "filesize": 0, "compressable" : 0}
 oldVault = None
@@ -110,16 +110,22 @@ def collectFile(filename):
 
   chksum = fileutils.hashFile(filename, config["sha-type"])
 
-  # Always log all found files, so we can determine if any was deleted
-  allFiles.append(filename)
+  # Remove files from the deleted index (so we catch files which are deleted, they are the ones left behind)
+  deletedFiles.pop(filename, None)
+  # Store SHA for quick lookup
+  item = shaFiles.get(chksum)
+  if item is None:
+    shaFiles[chksum] = [filename]
+  else:
+    item.append(filename)
 
-  if filename not in oldFiles or oldFiles[filename]["checksum"] != chksum or cmdline.full:
+  item = oldFiles.get(filename)
+  if item is None or item["checksum"] != chksum or cmdline.full:
     currentOp["filecount"] += 1
     currentOp["filesize"] += info.st_size
     if willCompress(filename):
       currentOp["compressable"] += info.st_size
     newFiles[filename] = {"checksum" : chksum, "memberof" : [config["unique"]], "deleted": []}
-
   return True
 
 def collectSources(sources):
@@ -298,9 +304,11 @@ Load the old data, containing checksums and backup sets
 if os.path.exists(config["file-checksum"]):
   with open(config["file-checksum"], "r") as fp:
     oldSave = json.load(fp)
-    oldFiles = oldSave["dataset"]
-    backupSets = oldSave["backups"]
-    oldVault = oldSave["vault"]
+    if configuration.isCompatible(oldSave["version"]):
+      oldFiles = oldSave["dataset"]
+      deletedFiles = oldFiles.copy()
+      backupSets = oldSave["backups"]
+      oldVault = oldSave["vault"]
   logging.info(
     "State loaded, last run was %s using version %s",
     datetime.fromtimestamp(oldSave["timestamp"]).strftime("%c"),
@@ -363,18 +371,39 @@ logging.info("Checking sources for changes")
 gotall = collectSources(config['sources'])
 
 logging.debug("Processing file structure changes")
-# Figure out which files that "got away" (ie, deleted)
-# TODO: FIX! VERY INEFFICIENT!
-#for k,v in oldFiles.iteritems():
-#  if v["checksum"] != "" and k not in allFiles:
-#    deletedFiles.append(k)
-for k in oldFiles:
-  if oldFiles[k]["checksum"] != "" and k not in allFiles:
-    deletedFiles.append(k)
-allFiles = None
 
-# Don't continue, just give summary and a good exit-code
+"""
+Figure out if any file was renamed, this is easily detected since a deleted file
+will have a new file with the same checksum.
+"""
+if config["detect-move"]:
+  tmpRemove = []
+  for k,v in deletedFiles.iteritems():
+    item = shaFiles.get(v["checksum"])
+    if item:
+      for f in item:
+        if f in newFiles:
+          # Moved! From k to f
+          movedFiles[f] = k
+          tmpRemove.append(k)
+          break
+  for k in tmpRemove:
+    deletedFiles.pop(k, None)
+      
+# When looking for changes, only provide a list of changes + summary
 if cmdline.changes:
+  logging.info("Detected changes:")
+  for k in deletedFiles:
+    logging.info("\"%s\" was deleted", k)
+  for k in newFiles:
+    if k in movedFiles:
+      logging.info("\"%s\" was renamed/moved from \"%s\"", k, movedFiles[k])
+    elif k not in oldFiles:
+      logging.info("\"%s\" is new", k)
+    else:
+      logging.info("\"%s\" changed", k)
+  logging.info("===============")
+
   if currentOp["filecount"] > 0 or len(deletedFiles):
     if len(oldFiles) == 0:
       logging.info("%d files (%s) to be backed up", currentOp["filecount"], helper.formatSize(currentOp["filesize"]))
@@ -392,35 +421,7 @@ if len(newFiles) == 0 and not gotall:
   logging.error("Can't continue, you have files bigger than maxsize")
   sys.exit(3)
 
-"""
-Figure out if any file was renamed, this is easily detected since a deleted file
-will have a new file with the same checksum. This does not work with meta data
-"""
-if config["detect-move"]:
-  for f in deletedFiles:
-    chksum = oldFiles[f]["checksum"]
-    for k,v in newFiles.iteritems():
-      if v["checksum"] == chksum:
-        movedFiles[k] = f # new place = old place
-        #logging.info("File \"%s\" has been moved to \"%s\"", f, k)
-        break
 
-# When looking for changes, only provide a list of changes + summary
-if cmdline.changes:
-  for k in deletedFiles:
-    if k not in movedFiles:
-      logging.info("\"%s\" was deleted", k)
-  for k in newFiles:
-    if k in movedFiles:
-      logging.info("\"%s\" was renamed/moved", k)
-    elif k not in oldFiles:
-      logging.info("\"%s\" is new", k)
-    else:
-      logging.info("\"%s\" changed", k)
-
-  if len(newFiles) or len(deletedFiles):
-    sys.exit(100)
-  sys.exit(0)
 
 # Time to compress
 files = gatherData()
@@ -488,7 +489,7 @@ backupSets[config["unique"]] = files
 
 logging.info("Saving the new checksum")
 saveData = {
-  "version" : "1.0.1",
+  "version" : configuration.getVersion(),
   "timestamp" : time.time(),
   "dataset" : oldFiles,
   "backups" : backupSets,
