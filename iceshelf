@@ -192,13 +192,18 @@ def gatherData():
           raise
 
   # Generate archive if we have any files
+  havearchive = False
   if (len(newFiles) - len(movedFiles)):
+    logging.info("Creating archive")
     archive = shutil.make_archive(file_archive_plain, mode, config["archivedir"],logger=logging)
     if archive is None or archive == "":
       logging.error("Was unable to create archive")
       return None
     logging.info("Removing temporary copies of files")
     fileutils.deleteTree(config["archivedir"], True)
+    havearchive = True
+  else:
+    logging.info("No files to save, skipping archive")
 
   # Produce the manifest
   if config["manifest"]:
@@ -217,7 +222,7 @@ def gatherData():
       json.dump(manifest, fp)
 
   # Security for the archive
-  if config["encrypt"]:
+  if config["encrypt"] and havearchive:
     logging.info("Encrypting archive")
     with open(file_archive, 'rb') as fp:
       gpg.encrypt_file(
@@ -230,7 +235,7 @@ def gatherData():
       # Remove old content
       os.remove(file_archive)
       file_archive += ".gpg"
-  if config["sign"]:
+  if config["sign"] and havearchive:
     logging.info("Signing archive")
     with open(file_archive, 'rb') as fp:
       gpg.sign_file(
@@ -245,7 +250,7 @@ def gatherData():
       file_archive += ".sig"
 
   # Add parity if requested
-  if config["parity"] > 0 and not fileutils.generateParity(file_archive, config["parity"]):
+  if config["parity"] > 0 and havearchive and not fileutils.generateParity(file_archive, config["parity"]):
       logging.error("Unable to create PAR2 file for this archive")
       return None
 
