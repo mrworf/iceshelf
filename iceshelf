@@ -250,9 +250,10 @@ def gatherData():
       file_archive += ".sig"
 
   # Add parity if requested
-  if config["parity"] > 0 and havearchive and not fileutils.generateParity(file_archive, config["parity"]):
-      logging.error("Unable to create PAR2 file for this archive")
-      return None
+  if havearchive:
+    if config["parity"] > 0 and not fileutils.generateParity(file_archive, config["parity"]):
+        logging.error("Unable to create PAR2 file for this archive")
+        return None
 
   # Security for all companion files...
   if config["sign"]:
@@ -394,7 +395,7 @@ if config["detect-move"]:
           break
   for k in tmpRemove:
     deletedFiles.pop(k, None)
-      
+
 # When looking for changes, only provide a list of changes + summary
 if cmdline.changes:
   logging.info("Detected changes:")

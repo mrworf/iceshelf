@@ -19,6 +19,7 @@ def generateParity(filename, level):
   p = Popen(cmd, stdout=PIPE, stderr=PIPE)
   out, err = p.communicate()
   if p.returncode != 0:
+    print "Command: " + repr(cmd)
     print "Output: " + out
     print "Error : " + err
     print "Code  : " + str(p.returncode)
