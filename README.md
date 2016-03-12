@@ -63,7 +63,7 @@ There, I said it. Enough with disclaimers now :-)
 In order to be able to run this, you need a few other parts installed.
 
 - OpenPGP / GNU Privacy Guard (typically referred to as `gpg`)
-- Python gnupg - Encryption & Signature
+- python-gnupg - Encryption & Signature (NOT `gnupg`, it's `python-gnupg`)
   Ubuntu comes with a version, but unfortunately it's too old. You should install this using the `pip` tool to make sure you get a current version.
 - par2 - Parity tool
 - glacier-cmd - The tool which interacts with Glacier
@@ -79,8 +79,9 @@ This is the simple version which points out what commands to run. Please conside
   ```
   sudo apt-get install python-dev
   sudo apt-get install python-pip
-  sudo pip install gnupg
+  sudo pip install python-gnupg
   ```
+
 3. PAR2 for parity
   ```
   sudo apt-get install par2
@@ -369,6 +370,11 @@ There is as of yet no way to have iceshelf retreive the backup it created and up
 - JSON is probably not going to cut-it in the future for local metadata storage
 
 # FAQ
+
+## After following the install, I get an error regarding "no attribute 'encrypt_file'"
+
+Unfortunately, there is both a gnupg and a python-gnupg implementation. This tool relies on the latter. If you get this error, then you've installed the `gnupg` version instead of `python-gnupg`.
+To fix this, please uninstall the wrong one `sudo pip uninstall gnupg` followed by the correct one `sudo pip install python-gnupg`
 
 ## What about the local database?
 
