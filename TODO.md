@@ -4,6 +4,11 @@ This file details what my goals are for this project, both in the short term and
 
 The list is intentionally kept vague to avoid over-promising and under-delivering :)
 
+## Critical fixes
+- Detect wrong version of gnupg
+- Detect missing key or wrong passphrase
+- Improve testsuite to cover permutations of: encrypt, sign, parity
+
 ## Short term
 - Add support for embedding manifest inside backup instead of separately
 - Add support for encrypting manifest outside backup instead of plain text
