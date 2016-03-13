@@ -6,7 +6,7 @@ mkdir data tmp content done
 
 # Generate content
 I=0
-for FILE in a b c d e f g h i j k l m n o p q r s t u v w x y z; do
+for FILE in a b c d e f g h i j k l m n o p q r s t u v w x y z åäö éùü; do
 	I=$(($I + 1))
 	dd if=/dev/zero of=content/${FILE} bs=1024 count=$(( $I * 123 )) 2>/dev/null
 done

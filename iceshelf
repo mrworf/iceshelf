@@ -75,12 +75,12 @@ cmdline = parser.parse_args()
 logging.getLogger('').handlers = []
 loglevel=logging.INFO
 if cmdline.logfile:
-  logformat='%(asctime)s - %(levelname)s - %(message)s'
+  logformat=u'%(asctime)s - %(levelname)s - %(message)s'
 else:
-  logformat='%(message)s'
+  logformat=u'%(message)s'
 if cmdline.debug:
   loglevel=logging.DEBUG
-  logformat='%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s'
+  logformat=u'%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s'
 
 logging.basicConfig(stream=sys.stdout, filename=cmdline.logfile, level=loglevel, format=logformat)
 logging.getLogger("gnupg").setLevel(logging.WARNING)
@@ -137,6 +137,10 @@ def collectSources(sources):
   # Time to start building a list of files
   result = True
   for name,path in sources.iteritems():
+    if not isinstance(path, unicode):
+      path = path.decode('utf-8')
+    if not isinstance(name, unicode):
+      name = name.decode('utf-8')
     logging.info("Processing \"%s\" (%s)", name, path)
     if os.path.isfile(path):
       if not configuration.isExcluded(path):
@@ -351,6 +355,7 @@ if os.path.exists(config["file-checksum"]):
     datetime.fromtimestamp(oldSave["timestamp"]).strftime("%c"),
     oldSave["version"]
   )
+  print repr(oldSave)
 else:
   logging.info("First run, no previous checksums")
 
@@ -431,14 +436,14 @@ if config["detect-move"]:
 if cmdline.changes:
   logging.info("Detected changes:")
   for k in deletedFiles:
-    logging.info("\"%s\" was deleted", k)
+    logging.info(u"\"%s\" was deleted", k)
   for k in newFiles:
     if k in movedFiles:
-      logging.info("\"%s\" was renamed/moved from \"%s\"", k, movedFiles[k])
+      logging.info(u"\"%s\" was renamed/moved from \"%s\"", k, movedFiles[k])
     elif k not in oldFiles:
-      logging.info("\"%s\" is new", k)
+      logging.info(u"\"%s\" is new", k)
     else:
-      logging.info("\"%s\" changed", k)
+      logging.info(u"\"%s\" changed", k)
   logging.info("===============")
 
   if currentOp["filecount"] > 0 or len(deletedFiles):
