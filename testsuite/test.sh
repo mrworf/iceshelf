@@ -1,134 +1,143 @@
 #!/bin/bash
 
-# Clean and prep
-rm -rf data tmp content done
-mkdir data tmp content done
+ICESHELF=../iceshelf
+COUNT=0
 
-# Generate content
-I=0
-for FILE in a b c d e f g h i j k l m n o p q r s t u v w x y z åäö éùü; do
-	I=$(($I + 1))
-	dd if=/dev/zero of=content/${FILE} bs=1024 count=$(( $I * 123 )) 2>/dev/null
-done
+# Removes old data and creates fresh
+function initialize() {
+  # Clean and prep
+  rm -rf data tmp content done
+  rm config_*
+  mkdir data tmp content done
 
-../iceshelf config --changes
-if [ $? -ne 1 ]; then
-  echo "Failed to detect changes"
-  exit 255
-fi
 
-../iceshelf config
-if [ $? -ne 0 ]; then
-  echo "Failed to backup"
-  exit 255
-fi
+  # Generate content
+  I=0
+  for FILE in a b c d e f g h i j k l m n o p q r s t u v w x y z åäö éùü; do
+  	I=$(($I + 1))
+  	dd if=/dev/zero of=content/${FILE} bs=1024 count=$(( $I * 123 )) 2>/dev/null
+  done
+}
 
-echo -e "\n\nTest 2: Change one file"
+# Creates a configuration file
+#
+# Param 1: Name of the config file, always prefixed with "config_"
+# Param 2: additional config parameters (supports escaping)
+#
+function generateConfig() {
+  echo >"config_$1" -e "$2"
+  cat >> "config_$1" << EOF
+[sources]
+test=content/
+[paths]
+prep dir: tmp/
+data dir: data/
+done dir: done/
+[options]
+max size:
+change method: data
+delta manifest: yes
+compress: no
+persuasive: yes
+ignore overlimit: no
+incompressible:
+max keep: 0
+detect move: yes
+EOF
+}
+
+# Runs an iceshelf session, first checking if there is any changes.
+# If no changes are found, it fails
+#
+# Param 1: Name of the test
+# Param 2: Run --changes ? If non-empty, it's skipped
+# Param 3: Optional script (pretest() and posttest())
+# Param 4: Configfile to use
+# Param 5+: Sent directly to iceshelf
+#
+function runTest() {
+  let "COUNT+=1"
+  printf "Test #%03d: %s\n" ${COUNT} "$1"
+
+  # Create functions
+  eval "$3"
+
+  if [ "$(type -t pretest)" == "function" ]; then
+    RESULT="$(pretest)"
+    if [ $? -ne 0 ]; then
+      echo "Pretest failed: $RESULT"
+      exit 255
+    fi
+  fi
+
+  if [ "$2" == "" ]; then
+    RESULT="$(${ICESHELF} 2>&1 config_$4 --changes)"
+    if [ $? -ne 1 ]; then
+      echo "Test failed: Didn't detect changes"
+      echo "$RESULT"
+      exit 255
+    fi
+  fi
+
+  RESULT="$(${ICESHELF} 2>&1 config_${@:4})"
+  if [ $? -ne 0 ]; then
+    echo "Test failed:"
+    echo "$RESULT"
+    exit 255
+  fi
+
+  if [ "$(type -t posttest)" == "function" ]; then
+    RESULT="$(posttest)"
+    if [ $? -ne 0 ]; then
+      echo "Posttest failed: $RESULT"
+      exit 255
+    fi
+  fi
+
+
+}
+
+initialize
+generateConfig regular
+generateConfig prefix "[options]\nprefix: prefixed-\n"
+
+runTest "Initial backup" "" "" regular
+
 dd if=/dev/urandom of=content/a bs=1024 count=123 2>/dev/null
-../iceshelf config --changes
-if [ $? -ne 1 ]; then
-  echo "Failed to detect changes"
-  exit 255
-fi
+runTest "Change one file" "" "" regular
 
-../iceshelf config
-if [ $? -ne 0 ]; then
-  echo "Failed to backup"
-  exit 255
-fi
-
-echo -e "\n\nDelete a file"
 rm content/b
-../iceshelf config --changes
-if [ $? -ne 1 ]; then
-  echo "Failed to detect changes"
-  exit 255
-fi
+runTest "Delete one file" "" "" regular
 
-../iceshelf config
-if [ $? -ne 0 ]; then
-  echo "Failed to backup"
-  exit 255
-fi
-
-echo -e "\n\nDelete a file and change another"
 rm content/c
 dd if=/dev/urandom of=content/a bs=1024 count=123 2>/dev/null
-../iceshelf config --changes
-if [ $? -ne 1 ]; then
-  echo "Failed to detect changes"
-  exit 255
-fi
+runTest "Delete one file and change another" "" "" regular
 
-../iceshelf config
-if [ $? -ne 0 ]; then
-  echo "Failed to backup"
-  exit 255
-fi
-
-echo -e "\n\nRestore a deleted file"
 dd if=/dev/urandom of=content/b bs=1024 count=243 2>/dev/null
-../iceshelf config --changes
-if [ $? -ne 1 ]; then
-  echo "Failed to detect changes"
-  exit 255
-fi
+runTest "Create new file with same name as deleted file" "" "" regular
 
-../iceshelf config
-if [ $? -ne 0 ]; then
-  echo "Failed to backup"
-  exit 255
-fi
-
-echo -e "\n\nDelete it again"
 rm content/b
-../iceshelf config --changes
-if [ $? -ne 1 ]; then
-  echo "Failed to detect changes"
-  exit 255
-fi
+runTest "Delete the new file again" "" "" regular
 
-../iceshelf config
-if [ $? -ne 0 ]; then
-  echo "Failed to backup"
-  exit 255
-fi
+runTest "Test prefix config" \
+  "skip" \
+  '
+function posttest() {
+  ls -laR done/ | grep prefix > /dev/null
+  if [ $? -ne 0 ]; then
+    echo "Prefix not working"
+    return 1
+  fi
+}
+  ' \
+  prefix --full
 
-echo -e "\n\nTesting prefix"
-../iceshelf --full config_prefix
-if [ $? -ne 0 ]; then
-  echo "Failed to backup"
-  exit 255
-fi
-ls -laR done/ | grep prefix > /dev/null
-if [ $? -ne 0 ]; then
-  echo "Prefix not working"
-  exit 255
-fi
-
-echo -e "\n\nMoved file"
 mv content/d content/dd
-../iceshelf config --changes
-if [ $? -ne 1 ]; then
-  echo "Failed to detect changes"
-  exit 255
-fi
-../iceshelf config
-if [ $? -ne 0 ]; then
-  echo "Failed to backup"
-  exit 255
-fi
+runTest "Moved file" "" "" regular
 
-echo -e "\n\nMoved file and copy the same"
 mv content/e content/ee
 cp content/ee content/eee
-../iceshelf config --changes
-if [ $? -ne 1 ]; then
-  echo "Failed to detect changes"
-  exit 255
-fi
-../iceshelf config
-if [ $? -ne 0 ]; then
-  echo "Failed to backup"
-  exit 255
-fi
+runTest "Move file and copy the same as well" "" "" regular
+
+echo -e "\nAll tests ended successfully"
+exit 0
