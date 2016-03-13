@@ -355,7 +355,6 @@ if os.path.exists(config["file-checksum"]):
     datetime.fromtimestamp(oldSave["timestamp"]).strftime("%c"),
     oldSave["version"]
   )
-  print repr(oldSave)
 else:
   logging.info("First run, no previous checksums")
 
