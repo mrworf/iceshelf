@@ -1,6 +1,8 @@
 import helper
 from subprocess import Popen, PIPE
 import logging
+import os
+import time
 
 def createVault(config):
   logging.info("Creating vault \"%s\"", config["glacier-vault"])
