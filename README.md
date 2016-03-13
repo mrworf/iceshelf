@@ -371,10 +371,10 @@ There is as of yet no way to have iceshelf retreive the backup it created and up
 
 # FAQ
 
-## After following the install, I get an error regarding "no attribute 'encrypt_file'"
+## When I run the tool, it says "Current GnuPG python module does not support file encryption, please check FAQ section in documentation"
 
 Unfortunately, there is both a gnupg and a python-gnupg implementation. This tool relies on the latter. If you get this error, then you've installed the `gnupg` version instead of `python-gnupg`.
-To fix this, please uninstall the wrong one `sudo pip uninstall gnupg` followed by the correct one `sudo pip install python-gnupg`
+To fix this, please uninstall the wrong one using either the package manager or `sudo pip uninstall gnupg` followed by the correct one `sudo pip install python-gnupg`
 
 ## What about the local database?
 

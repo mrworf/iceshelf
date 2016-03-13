@@ -86,6 +86,11 @@ logging.basicConfig(stream=sys.stdout, filename=cmdline.logfile, level=loglevel,
 logging.getLogger("gnupg").setLevel(logging.WARNING)
 logging.getLogger("shutil").setLevel(logging.WARNING)
 
+# Make sure we have the correct gnupg module
+if not "encrypt_file" in dir(gnupg.GPG()):
+  logging.error("Current GnuPG python module does not support file encryption, please check FAQ section in documentation")
+  sys.exit(255)
+
 #######################
 
 def shouldCompress():
