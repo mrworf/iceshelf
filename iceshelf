@@ -237,9 +237,12 @@ def gatherData():
         armor=False,
         output=file_archive+".gpg"
       )
-      # Remove old content
-      os.remove(file_archive)
-      file_archive += ".gpg"
+    if not os.path.exists(file_archive + ".gpg"):
+      logging.error("GnuPG didn't produce an encrypted file. Please make sure GnuPG is installed and running properly")
+      return None
+    # Remove old content
+    os.remove(file_archive)
+    file_archive += ".gpg"
   if config["sign"] and havearchive:
     logging.info("Signing archive")
     with open(file_archive, 'rb') as fp:
@@ -250,9 +253,12 @@ def gatherData():
         binary=True,
         output=file_archive+".sig"
       )
-      # Remove old content
-      os.remove(file_archive)
-      file_archive += ".sig"
+    if not os.path.exists(file_archive + ".sig"):
+      logging.error("GnuPG didn't produce a signed file. Please make sure GnuPG is installed and running properly")
+      return None
+    # Remove old content
+    os.remove(file_archive)
+    file_archive += ".sig"
 
   # Add parity if requested
   if havearchive:
@@ -271,9 +277,12 @@ def gatherData():
           passphrase=config["sign-pw"],
           output=file_manifest+".asc"
         )
-        # Remove old content
-        os.remove(file_manifest)
-        file_manifest += ".asc"
+      if not os.path.exists(file_manifest + ".asc"):
+        logging.error("GnuPG didn't produce a signed file. Please make sure GnuPG is installed and running properly")
+        return None
+      # Remove old content
+      os.remove(file_manifest)
+      file_manifest += ".asc"
     if config["parity"] > 0:
       logging.info("Signing parity")
       for f in os.listdir(config["prepdir"]):
@@ -287,8 +296,11 @@ def gatherData():
               binary=True,
               output=f+".sig"
             )
-            # Remove old content
-            os.remove(f)
+          if not os.path.exists(f + ".sig"):
+            logging.error("GnuPG didn't produce a signed file. Please make sure GnuPG is installed and running properly")
+            return None
+          # Remove old content
+          os.remove(f)
   return os.listdir(config["prepdir"])
 
 
@@ -308,7 +320,7 @@ if config["encrypt"] or config["sign"]:
       logging.error("Can't find encryption key \"%s\"" % config["encrypt"])
       sys.exit(1)
   if config["sign"]:
-    test = gpg.encrypt("test", config["sign"], passphrase=config["sign-pw"], armor=True)
+    test = gpg.sign("test", keyid=config["sign"], passphrase=config["sign-pw"], binary=False)
     if len(str(test)) == 0:
       logging.error("Can't find sign key \"%s\"" % config["sign"])
       sys.exit(1)
