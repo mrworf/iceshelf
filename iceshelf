@@ -294,6 +294,20 @@ if config is None:
   logging.error("Configuration is broken, please check %s" % cmdline.config)
   sys.exit(1)
 
+# Also make sure any GnuPG key is available and valid
+if config["encrypt"] or config["sign"]:
+  gpg = gnupg.GPG(options=['-z', '0']) # Do not use GPG compression since we use bzip2
+  if config["encrypt"]:
+    test = gpg.encrypt("test", config["encrypt"], passphrase=config["encrypt-pw"], armor=True)
+    if len(str(test)) == 0:
+      logging.error("Can't find encryption key \"%s\"" % config["encrypt"])
+      sys.exit(1)
+  if config["sign"]:
+    test = gpg.encrypt("test", config["sign"], passphrase=config["sign-pw"], armor=True)
+    if len(str(test)) == 0:
+      logging.error("Can't find sign key \"%s\"" % config["sign"])
+      sys.exit(1)
+
 # Add more extensions (if provided)
 if config["extra-ext"] is not None:
   incompressable += config["extra-ext"]
