@@ -376,6 +376,12 @@ There is as of yet no way to have iceshelf retreive the backup it created and up
 Unfortunately, there is both a gnupg and a python-gnupg implementation. This tool relies on the latter. If you get this error, then you've installed the `gnupg` version instead of `python-gnupg`.
 To fix this, please uninstall the wrong one using either the package manager or `sudo pip uninstall gnupg` followed by the correct one `sudo pip install python-gnupg`
 
+## I get "Filename '&lt;some file&gt;' is corrupt, please rename it. Will be skipped for now" warnings
+
+This happens, in particular on Unix filesystems where you might, at one point, have stored filename information encoded in a non-UTF8 format (such as Latin1, or similar). When you then upgraded to UTF8, these files remained. Usually doing a `ls -la <some file's folder>` it will show up but with a questionmark where the character should be. This is because it's not compatible with UTF8.
+
+To fix it, simply rename the file and it will work as expected.
+
 ## What about the local database?
 
 Yes, it's vulnerable to tampering, bitrot and loss. But instead of constructing something to solve that locally, I would recommend you simply add an entry to the [sources] section of the config:

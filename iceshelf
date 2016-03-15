@@ -137,10 +137,6 @@ def collectSources(sources):
   # Time to start building a list of files
   result = True
   for name,path in sources.iteritems():
-    if not isinstance(path, unicode):
-      path = path.decode('utf-8')
-    if not isinstance(name, unicode):
-      name = name.decode('utf-8')
     logging.info("Processing \"%s\" (%s)", name, path)
     if os.path.isfile(path):
       if not configuration.isExcluded(path):
@@ -153,12 +149,20 @@ def collectSources(sources):
       for root, dirs, files in os.walk(path):
         for f in files:
           if not configuration.isExcluded(os.path.join(root, f)):
-            if not collectFile(os.path.join(root, f)):
-              if not config["persuasive"] and not cmdline.changes:
-                logging.debug("Not persuasive")
-                return False
-              else:
-                result = False
+            filename = os.path.join(root, f)
+            try:
+              filename = filename.decode("utf-8")
+            except:
+              logging.warning('Filename %s is corrupt, please rename it. Will be skipped for now' % repr(filename))
+              filename = None
+
+            if filename is not None:
+              if not collectFile(filename):
+                if not config["persuasive"] and not cmdline.changes:
+                  logging.debug("Not persuasive")
+                  return False
+                else:
+                  result = False
   return result
 
 
@@ -227,7 +231,7 @@ def gatherData():
         tmp2.append(k)
 
     manifest = {"modified" : tmp1, "deleted" : tmp2, "moved" : movedFiles}
-    with open(file_manifest, "w") as fp:
+    with open(file_manifest, "wb") as fp:
       json.dump(manifest, fp)
 
   # Security for the archive
@@ -343,7 +347,7 @@ config["archivedir"] = os.path.join(config["prepdir"], config["unique"])
 Load the old data, containing checksums and backup sets
 """
 if os.path.exists(config["file-checksum"]):
-  with open(config["file-checksum"], "r") as fp:
+  with open(config["file-checksum"], "rb") as fp:
     oldSave = json.load(fp)
     if configuration.isCompatible(oldSave["version"]):
       oldFiles = oldSave["dataset"]
@@ -536,7 +540,7 @@ saveData = {
   "backups" : backupSets,
   "vault" : config["glacier-vault"]
 }
-with open(config["file-checksum"] + "_tmp", "w") as fp:
+with open(config["file-checksum"] + "_tmp", "wb") as fp:
   json.dump(saveData, fp)
 
 # Copy the new file into place and then delete the temp file

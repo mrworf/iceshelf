@@ -4,8 +4,6 @@ import hashlib
 from subprocess import Popen, PIPE
 
 def deleteTree(tree, include_self=False):
-  if not isinstance(tree, unicode):
-    tree = tree.decode('utf-8')
   for root, dirs, files in os.walk(tree, topdown=False):
     for name in files:
       os.remove(os.path.join(root, name))
