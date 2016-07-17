@@ -1,0 +1,44 @@
+[Unit]
+Description=incremental backups using Amazon Glacier
+Documentation=https://github.com/mrworf/iceshelf
+After=network.target
+
+[Service]
+# Configure your user here
+User=ice
+Group=ice
+
+# Configure paths to iceshelf and config here
+Environment="ICESHELF=/home/ice/src/iceshelf"
+Environment="CONFIG=/home/ice/iceshelf.conf"
+
+Type=simple
+ExecStart=/usr/bin/python ${ICESHELF} ${CONFIG}
+
+# Restart if not finished
+RestartForceExitStatus=10
+SuccessExitStatus=10
+
+PrivateTmp=true
+NoNewPrivileges=true
+PrivateDevices=true
+# mounts read-only: /usr, /boot and /etc
+ProtectSystem=full
+
+# Everything is read-only by default
+ReadOnlyDirectories=/
+# Allow writing to these directories:        (GnuPG needs to lock its keyrings, add tmp dir and data dir)
+ReadWriteDirectories=/home/ice/.gnupg /home/ice/tmpdir /home/ice/datadir
+# Don't allow access to these directories:   (GnuPG needs /dev)
+InaccessibleDirectories=-/root -/opt -/run -/sbin
+
+# -20 = highest, 19 lowest
+Nice=13
+# none, realtime, best-effort, idle
+IOSchedulingClass=idle
+# 0 = highest, 7 = lowest
+IOSchedulingPriority=6
+
+
+[Install]
+WantedBy=multi-user.target
