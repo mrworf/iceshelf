@@ -38,10 +38,10 @@ import tarfile
 import gnupg
 from subprocess import Popen, PIPE
 
-import configuration
-import fileutils
-import helper
-import glacier
+import modules.configuration as configuration
+import modules.fileutils as fileutils
+import modules.helper as helper
+import modules.glacier as glacier
 
 oldFiles = {}
 newFiles = {}
