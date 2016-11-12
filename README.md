@@ -404,6 +404,6 @@ If this turns out to be a major concern/issue, I'll revisit this question.
 
 For now, there is no way to get a list of backups which omits incremental backups to produce a full restore. What this means is that you should download ALL the files and then unpack/overwrite based on old->new order. This is a big shortcoming right now but work is being made to remedy this.
 
-## After doing some development on your code, how will I know I didn't break anything?
+## After doing some development on the code, how will I know I didn't break anything?
 
 Please use the testsuite and run a complete iteration with GPG and PAR2. Also extend the suite if needed to cover any specific testcase which was previously missed.
