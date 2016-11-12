@@ -14,8 +14,8 @@ setting = {
   "use-sha": True,
   "sha-type": "sha1",
   "maxsize": 0,
-  "prepdir": "/tmp/",
-  "datadir": "data/",
+  "prepdir": "backup/inprogress/",
+  "datadir": "backup/metadata/",
   "sources": {},
   "exclude": [],
   "persuasive": True,
@@ -23,19 +23,20 @@ setting = {
   "compress-force": False,
   "ignore-overlimit": False,
   "extra-ext" : None,
-  "donedir": None,
+  "donedir": "backup/done/",
   "maxkeep": 0,
   "glacier-config" : None,
   "glacier-vault" : None,
   "prefix" : "",
   "detect-move": False,
+  "create-paths": False,
 }
 
 def getVersion():
   return [1,1,0]
 
 def isCompatible(version):
-  """ 
+  """
   Checks if the version (x.y.z) is compatible with ours
   The general rule is that as long as only Z changes,
   it remains compatible.
@@ -55,9 +56,11 @@ def parse(filename):
   config.add_section("sources")
 
   config.add_section("paths")
-  config.set("paths", "prep dir", "/tmp/")
-  config.set("paths", "data dir", "data/")
+  config.set("paths", "prep dir", "backup/inprogress/")
+  config.set("paths", "data dir", "backup/metadata/")
+  config.set("paths", "done dir", "backup/done/")
   config.set("paths", "prefix", "")
+  config.set("paths", "create paths", "no")
 
   config.add_section("options")
   config.set("options", "max size", "0")
@@ -184,23 +187,55 @@ def parse(filename):
       logging.warn("max size is limited to 32GB when using parity, changing setting accordingly")
       setting["maxsize"] = 34359738367 # (actually 32GB - 1 byte)
 
-  if config.get("paths", "prep dir") == "" or not os.path.isdir(config.get("paths", "prep dir")):
+  if config.get("paths", "create paths").lower() not in ["yes", "no"]:
+    logging.error("create paths has to be yes or no")
+  elif config.get("paths", "create paths").lower() == "yes":
+    setting["create-paths"] = True
+
+  if config.get("paths", "prep dir") == "":
+    logging.error("Preparation dir cannot be empty")
+  elif not os.path.isdir(config.get("paths", "prep dir")) and setting["create-paths"] == False:
     logging.error("Preparation dir doesn't exist")
     return None
   else:
     setting["prepdir"] = os.path.join(config.get("paths", "prep dir"), "iceshelf")
+    if setting["create-paths"]:
+      try:
+        os.makedirs(setting["prepdir"])
+      except OSError as e:
+        if e.errno is not 17:
+          logging.exception("Cannot create preparation dir")
+          return None
 
-  if config.get("paths", "data dir") == "" or not os.path.isdir(config.get("paths", "data dir")):
+  if config.get("paths", "data dir") == "":
+    logging.error("Data dir cannot be empty")
+  elif not os.path.isdir(config.get("paths", "data dir")) and setting["create-paths"] == False:
     logging.error("Data dir doesn't exist")
     return None
   else:
     setting["datadir"] = config.get("paths", "data dir")
+    if setting["create-paths"]:
+      try:
+        os.makedirs(setting["datadir"])
+      except OSError as e:
+        if e.errno is not 17:
+          logging.exception("Cannot create data dir")
+          return None
 
-  if config.get("paths", "done dir") != "" and not os.path.isdir(config.get("paths", "done dir")):
+  if config.get("paths", "done dir") == "":
+    logging.error("Done dir cannot be empty")
+  elif not os.path.isdir(config.get("paths", "done dir")) and setting["create-paths"] == False:
     logging.error("Done dir doesn't exist")
     return None
   elif config.get("paths", "done dir") != "":
     setting["donedir"] = config.get("paths", "done dir")
+    if setting["create-paths"]:
+      try:
+        os.makedirs(setting["donedir"])
+      except OSError as e:
+        if e.errno is not 17:
+          logging.exception("Cannot create done dir")
+          return None
 
   # Check that all sources are either directories or files
   for x in config.options("sources"):
