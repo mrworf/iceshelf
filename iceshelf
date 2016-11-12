@@ -181,6 +181,7 @@ def gatherData():
       logging.info("Content is not likely to compress (%d%% chance), skipping compression.", shouldCompress())
 
   # Copy the files...
+  logging.info("Preparing content for archving, may take quite a while depending on size")
   for k in newFiles:
     if k not in movedFiles:
       # Make sure path exists, then copy it...
@@ -492,7 +493,7 @@ logging.info(msg)
 # create vaults if we need to.
 backup = False
 if config["glacier-config"] is not None:
-  if config["glacier-vault"] != oldVault or True:
+  if config["glacier-vault"] != oldVault:
     logging.info("Glacier vault most likely not in cloud, let's create it")
     if glacier.createVault(config):
       backup = glacier.uploadFiles(config, files, totalbytes)
