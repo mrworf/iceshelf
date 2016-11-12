@@ -202,7 +202,10 @@ def gatherData():
               raise
     havearchive = True
   else:
-    logging.info("No files to save, skipping archive")
+    if len(movedFiles):
+      logging.info("No files to save, only metadata changes, skipping archive")
+    else:
+      logging.info("No files to save, skipping archive")
 
   # Produce the manifest
   if config["manifest"]:
@@ -338,7 +341,11 @@ if os.path.exists(config["file-checksum"]):
     oldSave = json.load(fp)
     if configuration.isCompatible(oldSave["version"]):
       oldFiles = oldSave["dataset"]
-      deletedFiles = oldFiles.copy()
+      #deletedFiles = oldFiles.copy()
+      for k in oldFiles:
+        if oldFiles[k]["checksum"] != '':
+          deletedFiles[k] = oldFiles[k]
+
       backupSets = oldSave["backups"]
       oldVault = oldSave["vault"]
   logging.info(
@@ -380,7 +387,7 @@ if cmdline.list:
 
   filetree.sort()
   for b in filetree:
-    print b
+    logging.info(b)
   sys.exit(0)
 
 if cmdline.modified:
@@ -461,6 +468,7 @@ if cmdline.changes:
   logging.info("Detected changes:")
   for k in deletedFiles:
     logging.info(u"\"%s\" was deleted", k)
+
   for k in newFiles:
     if k in movedFiles:
       logging.info(u"\"%s\" was renamed/moved from \"%s\"", k, movedFiles[k])
@@ -468,9 +476,9 @@ if cmdline.changes:
       logging.info(u"\"%s\" is new", k)
     else:
       logging.info(u"\"%s\" changed", k)
-  logging.info("===============")
 
   if currentOp["filecount"] > 0 or len(deletedFiles):
+    logging.info("===============")
     if len(oldFiles) == 0:
       logging.info("%d files (%s) to be backed up", currentOp["filecount"], helper.formatSize(currentOp["filesize"]))
     else:
@@ -494,6 +502,10 @@ files = gatherData()
 if files is None:
   logging.error("Failed to gather all data and compress it.")
   sys.exit(2)
+
+if currentOp["filecount"] == 0 and len(deletedFiles) == 0 and config["skip-empty"]:
+  logging.info("No changes detected, skipping backup")
+  sys.exit(0)
 
 msg = "%d files (%s) gathered" % (currentOp["filecount"], helper.formatSize(currentOp["filesize"]))
 if config["compress"] and (shouldCompress() or config["compress-force"]):
@@ -549,6 +561,15 @@ for f in deletedFiles:
   else:
     oldFiles[f]["deleted"] = [config["unique"]]
   oldFiles[f]["checksum"] = "" # Wipe checksum to make sure new copy is backed up
+
+# We also need to handle the moved files properly to avoid marking a moved file as deleted
+# on the next run.
+for _new,_old in movedFiles.iteritems():
+  if "deleted" in oldFiles[_old]:
+    oldFiles[_old]["deleted"].append(config["unique"])
+  else:
+    oldFiles[_old]["deleted"] = [config["unique"]]
+  oldFiles[_old]["checksum"] = ""
 
 # Add the backup to our sets...
 backupSets[config["unique"]] = files

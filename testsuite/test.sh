@@ -245,7 +245,17 @@ for V in "${VARIATIONS[@]}"; do
   rm content/b
   runTest "Delete one file" "" "" regular "Only in compare/content: b"
 
-  runTest "Run without any changes" "" "" regular
+  runTest "Run without any changes" \
+    "skip" \
+    '
+  function pretest() {
+    if ! ${ICESHELF} --changes config_regular; then
+      echo "ERROR: Changes detected when there should not be any"
+      exit 255
+    fi
+  }
+    ' \
+    regular ""
 
   rm content/c
   dd if=/dev/urandom of=content/a bs=1024 count=123 2>/dev/null

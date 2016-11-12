@@ -30,6 +30,7 @@ setting = {
   "prefix" : "",
   "detect-move": False,
   "create-paths": False,
+  "skip-empty": False,
 }
 
 def getVersion():
@@ -70,6 +71,7 @@ def parse(filename):
   config.set("options", "incompressible", "")
   config.set("options", "persuasive", "no")
   config.set("options", "detect move", "no")
+  config.set("options", "skip empty", "no")
 
   config.add_section("glacier")
   config.set("glacier", "config", "")
@@ -125,6 +127,12 @@ def parse(filename):
     setting["compress"] = False
   elif config.get("options", "compress").lower() == "force":
     setting["compress-force"] = True
+
+  if config.get("options", "skip empty").lower() not in ["yes", "no"]:
+    logging.error("skip empty has to be yes/no")
+    return None
+  elif config.get("options", "skip empty").lower() == "yes":
+    setting["skip-empty"] = True
 
   if config.get("options", "change method").lower() not in [ "data", "sha1", "sha256", "sha512"]:
     logging.error("Change method has to be data, sha1, sha256 or sha512 (meta is deprecated)")

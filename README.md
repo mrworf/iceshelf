@@ -218,6 +218,14 @@ Optional setting, allows you to add the selected prefix to all files produced by
 
 *default is no prefix*
 
+#### detect move
+
+This is an *experimental* feature which tries to detect when you've just moved a file or renamed it. It will only log the change to the JSON manifest and will not upload the file, since it's the same file.
+
+HOWEVER, there is no real way to resolve the relationship between the old name and the new name using any of the currently available commands, making it impossible to reliably restore such a backup.
+
+*default is `no`*
+
 ### Section [exclude]
 
 This is an optional section, by default iceshelf will backup every file it finds in the source. But sometimes that's not always appreciated. This section allows you to define some exclusion rules.
