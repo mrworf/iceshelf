@@ -29,8 +29,8 @@ me, finding cool names (phun intended) for projects is not always easy*
 
 1. Loads backup database if available
 2. Empties prep directory of any files
-3. Copies files to prep directory (recreating directory structure) until no more are found or limit is hit. If this wasn't the first run, only new or changed files are copied
-4. A tar archive is created, possible compressed with bzip2 (depending on content and options)
+3. Creates a tar file (recreating directory structure) until no more are found or limit is hit. If this wasn't the first run, only new or changed files are copied
+4. Depending on options, tar file is compressed with bzip2
 5. The archive is encrypted with a public key of your choice
 6. The archive is signed with a public key of your choice (not necessarily the same as in #6)
 7. A manifest of all files in the archive + checksums is stored as a JSON file
@@ -118,17 +118,15 @@ Iceshelf needs some space for both temporary files and the local database.
 
 #### prep dir
 
-The folder to hold the temporary files, this needs to hold around twice the size of the maximum expected data to backed up at any time, so a ram-backed storage (such as tmpfs) is a **VERY BAD IDEA**. Especially since AWS Glacier uploads can take "a while".
+The folder to hold the temporary files, like the in-transit tar files and related files, so a ram-backed storage (such as tmpfs) is a **VERY BAD IDEA**. Especially since AWS Glacier uploads can take "a while".
 
-But, you know, to prove a rule...
-
-*default is `/tmp/`*
+*default is `backup/inprogress/`*
 
 #### data dir
 
 Where to store local data needed by iceshelf to function. Today that's a checksum database, tomorrow, who knows? Might be good to back up (yes, you can do that).
 
-*default is `data/`*
+*default is `backup/metadata/`*
 
 #### done dir
 
@@ -136,7 +134,13 @@ Where to store the backup once it's been completed. If this is blank, no backup 
 
 Please note that it copies the data to the new location and only on success will it delete the original archive files.
 
-*default is blank, no storage of backups*
+*default is `backup/done/`*
+
+#### create paths
+
+By default, iceshelf does not create the done, data or preparation directories, it leaves this responsibility to the user. However, by setting this option to yes, it will create the needed structure as described in the configuration file.
+
+*default is `no`*
 
 ### Section [options]
 
@@ -150,7 +154,9 @@ This option is defined in bytes, but can also be suffixed with K, M, G or T to i
 
 A value of zero or simply blank (or left out) will make it unlimited (unless `add parity` is in-effect)
 
-**If the backup didn't include all files due to exceeded max size, then iceshelf will exit with code 10. By rerunning iceshelf with the same parameters it will continue where it left of. If you do this until it exits with zero, you'll have a full backup.**
+**If the backup didn't include all files due to exceeded max size, then iceshelf will exit with code 10. By rerunning iceshelf with the same parameters it will continue where it left of. If you do this until it exits with zero, you'll have a full backup.
+
+This behavior is to allow you to segment your uploads into a specific size.**
 
 *default is blank, no limit*
 
@@ -393,3 +399,11 @@ iceshelf-db=/where/i/store/the/checksum.json
 And presto, each copy of the archive will have the previous database included. Which is fine because normally the `delta manifest` option is enabled which means that you got it all covered.
 
 If this turns out to be a major concern/issue, I'll revisit this question.
+
+## How am I supposed to restore a full backup?
+
+For now, there is no way to get a list of backups which omits incremental backups to produce a full restore. What this means is that you should download ALL the files and then unpack/overwrite based on old->new order. This is a big shortcoming right now but work is being made to remedy this.
+
+## After doing some development on your code, how will I know I didn't break anything?
+
+Please use the testsuite and run a complete iteration with GPG and PAR2. Also extend the suite if needed to cover any specific testcase which was previously missed.
