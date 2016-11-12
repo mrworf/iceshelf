@@ -191,7 +191,13 @@ function hasGPGconfig() {
   return $?
 }
 
-VARIATIONS=("normal" "parity")
+if hash par2 ; then
+  VARIATIONS=("normal" "parity")
+else
+  echo 'Note! PAR2 configuration not detected'
+  echo 'To enable PAR2 testing (parity support), please install par2 tools.'
+  VARIATIONS=("normal")
+fi
 
 # See if user has installed the testkey
 if ! hasGPGconfig; then
@@ -238,6 +244,8 @@ for V in "${VARIATIONS[@]}"; do
 
   rm content/b
   runTest "Delete one file" "" "" regular "Only in compare/content: b"
+
+  runTest "Run without any changes" "" "" regular
 
   rm content/c
   dd if=/dev/urandom of=content/a bs=1024 count=123 2>/dev/null
