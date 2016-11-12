@@ -34,6 +34,7 @@ import json
 from datetime import datetime
 import time
 import shutil
+import tarfile
 import gnupg
 from subprocess import Popen, PIPE
 
@@ -167,54 +168,34 @@ def collectSources(sources):
 
 
 def gatherData():
-  mode = "tar"
-  file_archive_plain = os.path.join(config["prepdir"], config["prefix"] + config["unique"])
-  file_archive = file_archive_plain + ".tar"
+  mode = "w"
+  file_archive = os.path.join(config["prepdir"], config["prefix"] + config["unique"]) + ".tar"
   file_manifest = os.path.join(config["prepdir"], config["prefix"] + config["unique"]) + ".json"
   gpg = gnupg.GPG(options=['-z', '0']) # Do not use GPG compression since we use bzip2
 
   if config["compress"]:
     if config["compress-force"] or shouldCompress():
-      mode = "bztar"
+      mode = "w|bz2"
       file_archive += ".bz2"
     else:
       logging.info("Content is not likely to compress (%d%% chance), skipping compression.", shouldCompress())
 
   # Copy the files...
   logging.info("Preparing content for archving, may take quite a while depending on size")
-  for k in newFiles:
-    if k not in movedFiles:
-      # Make sure path exists, then copy it...
-      destfile = config["archivedir"] + "/" + k
-      destdir = os.path.dirname(destfile)
-      if not os.path.isdir(destdir):
-        try:
-          os.makedirs(destdir)
-        except OSError as e:
-          if e.errno is not 17:
-            logging.exception("Error creating directory structure")
-            raise
-
-      # Copy the files into its new location
-      try:
-        shutil.copy2(k, destfile)
-      except IOError as e:
-        if e.errno is 2:
-          logging.warning("File \"%s\" was removed after initial scan", k)
-        else:
-          logging.exception("Error copying file \"%s\"", k)
-          raise
-
-  # Generate archive if we have any files
   havearchive = False
   if (len(newFiles) - len(movedFiles)):
-    logging.info("Creating archive")
-    archive = shutil.make_archive(file_archive_plain, mode, config["archivedir"],logger=logging)
-    if archive is None or archive == "":
-      logging.error("Was unable to create archive")
-      return None
-    logging.info("Removing temporary copies of files")
-    fileutils.deleteTree(config["archivedir"], True)
+    with tarfile.open(file_archive, "w") as tar:
+      tar.dereference = True
+      for k in newFiles:
+        if k not in movedFiles:
+          try:
+            tar.add(k, recursive=False)
+          except IOError as e:
+            if e.errno is 2:
+              logging.warning("File \"%s\" was removed after initial scan", k)
+            else:
+              logging.exception("Error copying file \"%s\"", k)
+              raise
     havearchive = True
   else:
     logging.info("No files to save, skipping archive")
@@ -260,6 +241,7 @@ def gatherData():
         keyid=config["sign"],
         passphrase=config["sign-pw"],
         binary=True,
+        clearsign=False,
         output=file_archive+".sig"
       )
     if not os.path.exists(file_archive + ".sig"):
