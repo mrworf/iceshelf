@@ -69,6 +69,7 @@ parser.add_argument('--find', metavar='STRING', help='Searches the backup archiv
 parser.add_argument('--show', metavar='ARCHIVE', help='Shows members of a certain archive')
 parser.add_argument('--modified', action='store_true', default=False, help='Show all files which exists multiple times due to modifications')
 parser.add_argument('--full', action='store_true', default=False, help='Full backup, regardless of changes to files')
+parser.add_argument('--list', type=str.lower, choices=['files', 'members', 'sets'], help='List currently backed up structure')
 parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
 cmdline = parser.parse_args()
 
@@ -347,6 +348,40 @@ if os.path.exists(config["file-checksum"]):
   )
 else:
   logging.info("First run, no previous checksums")
+
+if cmdline.list:
+  if cmdline.list == "files":
+    logging.info("Files in current backup:")
+  elif cmdline.list == "members":
+    logging.info("Backups containing files in current backup:")
+  elif cmdline.list == "sets":
+    logging.info("Needed backup sets to restore complete backup (in this order):")
+
+  # Find out which was the latest backup
+  # Build a tree so we can sort it
+  backuptree = []
+  for k,v in backupSets.iteritems():
+    backuptree.append(k)
+  backuptree.sort()
+
+  filetree = []
+  for k,v in oldFiles.iteritems():
+    if v["checksum"] != "":
+      if cmdline.list == "members":
+        last = sorted(v["memberof"])
+        filetree.append(last[len(last)-1] + ' "' + k + '"')
+      elif cmdline.list == "sets":
+        last = sorted(v["memberof"])
+        item = last[len(last)-1]
+        if not item in filetree:
+          filetree.append(item)
+      else:
+        filetree.append('"' + k + '"')
+
+  filetree.sort()
+  for b in filetree:
+    print b
+  sys.exit(0)
 
 if cmdline.modified:
   found = 0

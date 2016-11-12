@@ -363,6 +363,12 @@ You can also provide a few options via the commandline, these are not available 
 
 `--full` forces a complete backup, foregoing the incremential logic.
 
+`--list files` shows the current state of your backup, as iceshelf knows it
+
+`--list members` shows the files that are a part of your backup and where to find the latest copy of that file
+
+`--list sets` shows the backups you need to retrieve to restore a complete backup (please unpack in old->new order)
+
 No matter what options you add, you *must* point out the configuration file, or you will not get any results.
 
 # What's missing?
@@ -402,8 +408,10 @@ If this turns out to be a major concern/issue, I'll revisit this question.
 
 ## How am I supposed to restore a full backup?
 
-For now, there is no way to get a list of backups which omits incremental backups to produce a full restore. What this means is that you should download ALL the files and then unpack/overwrite based on old->new order. This is a big shortcoming right now but work is being made to remedy this.
+Using the `--list sets` option, iceshelf will list the necessary backups you need to restore and in the order to do it. Currently it will not warn you if some files were meant to be deleted (ie, file in backup1 was deleted in backup2) but in many cases this is not an issue. Future versions will allow you to restore using the tool itself.
 
-## After doing some development on the code, how will I know I didn't break anything?
+## After doing some development on the code, how will I know something didn't break?
 
 Please use the testsuite and run a complete iteration with GPG and PAR2. Also extend the suite if needed to cover any specific testcase which was previously missed.
+
+If you submit a pull request, please include the output from the testsuite.
