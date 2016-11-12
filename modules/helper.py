@@ -1,9 +1,9 @@
 
 def formatSize(size):
-  return formatNumber(size, ["bytes", "K", "M", "G", "T"])
+  return formatNumber(size, [" bytes", "K", "M", "G", "T"])
 
 def formatSpeed(bps):
-  return formatNumber(bps, ["bytes/s", "K/s", "M/s", "G/s", "T/s"])
+  return formatNumber(bps, [" bytes/s", "K/s", "M/s", "G/s", "T/s"])
 
 def formatNumber(number, units):
   i = 0

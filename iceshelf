@@ -95,6 +95,8 @@ if not "encrypt_file" in dir(gnupg.GPG()):
 #######################
 
 def shouldCompress():
+  if currentOp["filesize"] == 0:
+    return 0
   chance = int((currentOp["compressable"] * 100) / currentOp["filesize"])
   return chance >= 20
 
@@ -173,17 +175,18 @@ def gatherData():
   file_manifest = os.path.join(config["prepdir"], config["prefix"] + config["unique"]) + ".json"
   gpg = gnupg.GPG(options=['-z', '0']) # Do not use GPG compression since we use bzip2
 
-  if config["compress"]:
-    if config["compress-force"] or shouldCompress():
-      mode = "w|bz2"
-      file_archive += ".bz2"
-    else:
-      logging.info("Content is not likely to compress (%d%% chance), skipping compression.", shouldCompress())
-
-  # Copy the files...
-  logging.info("Preparing content for archving, may take quite a while depending on size")
   havearchive = False
   if (len(newFiles) - len(movedFiles)):
+    # Don't bother compressing if we have no data
+    if config["compress"] and currentOp["filesize"] > 0:
+      if config["compress-force"] or shouldCompress():
+        mode = "w|bz2"
+        file_archive += ".bz2"
+      else:
+        logging.info("Content is not likely to compress (%d%% chance), skipping compression.", shouldCompress())
+
+    # Copy the files...
+    logging.info("Preparing content for archving, may take quite a while depending on size")
     with tarfile.open(file_archive, "w") as tar:
       tar.dereference = True
       for k in newFiles:
@@ -457,7 +460,7 @@ if files is None:
   logging.error("Failed to gather all data and compress it.")
   sys.exit(2)
 
-msg = "%d files (%s bytes) gathered" % (currentOp["filecount"], helper.formatSize(currentOp["filesize"]))
+msg = "%d files (%s) gathered" % (currentOp["filecount"], helper.formatSize(currentOp["filesize"]))
 if config["compress"] and (shouldCompress() or config["compress-force"]):
   msg += ", compressed"
 if config["encrypt"]:
