@@ -619,7 +619,7 @@ with open(config["file-checksum"] + "_tmp", "wb") as fp:
 try:
   shutil.copy(config["file-checksum"] + "_tmp", config["file-checksum"])
 except OSError as e:
-  if e.errno is 1:
+  if e.errno == 1:
     logging.warn("Unable to change rights on copied file")
   else:
     logging.exception("Error copying file")
@@ -636,10 +636,17 @@ if config["donedir"] is not None:
   dest = os.path.join(config["donedir"], config["unique"])
   os.mkdir(dest)
   for f in files:
-    shutil.copy(
-      os.path.join(config["prepdir"], f),
-      os.path.join(dest, f)
-    )
+    try:
+      shutil.copy(
+        os.path.join(config["prepdir"], f),
+        os.path.join(dest, f)
+      )
+    except OSError as e:
+      if e.errno == 1:
+        logging.warn("Unable to change rights on copied file")
+      else:
+        logging.exception("Error copying file")
+        raise
     os.remove(os.path.join(config["prepdir"], f))
   os.rmdir(config["prepdir"])
 
