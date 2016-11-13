@@ -222,7 +222,7 @@ Optional setting, allows you to add the selected prefix to all files produced by
 
 This is an *experimental* feature which tries to detect when you've just moved a file or renamed it. It will only log the change to the JSON manifest and will not upload the file, since it's the same file.
 
-HOWEVER, there is no real way to resolve the relationship between the old name and the new name using any of the currently available commands, making it impossible to reliably restore such a backup.
+It's a very new feature and should be used with caution. It will track what backup the original file was in and what the name was, so it should be able to provide details for restore of moved files, but it's not 100% tested.
 
 *default is `no`*
 
@@ -416,7 +416,7 @@ If this turns out to be a major concern/issue, I'll revisit this question.
 
 ## How am I supposed to restore a full backup?
 
-Using the `--list sets` option, iceshelf will list the necessary backups you need to restore and in the order to do it. Currently it will not warn you if some files were meant to be deleted (ie, file in backup1 was deleted in backup2) but in many cases this is not an issue. Future versions will allow you to restore using the tool itself.
+Using the `--list sets` option, iceshelf will list the necessary backups you need to restore and in the order to do it. If a file was moved, the tool will display what the original name was and what the new name is supposed to be.
 
 ## After doing some development on the code, how will I know something didn't break?
 
