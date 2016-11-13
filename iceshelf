@@ -616,8 +616,20 @@ with open(config["file-checksum"] + "_tmp", "wb") as fp:
   json.dump(saveData, fp)
 
 # Copy the new file into place and then delete the temp file
-shutil.copy(config["file-checksum"] + "_tmp", config["file-checksum"])
-os.remove(config["file-checksum"] + "_tmp")
+try:
+  shutil.copy(config["file-checksum"] + "_tmp", config["file-checksum"])
+except OSError as e:
+  if e.errno is 1:
+    logging.warn("Unable to change rights on copied file")
+  else:
+    logging.exception("Error copying file")
+    raise
+
+try:
+  os.remove(config["file-checksum"] + "_tmp")
+except OSError as e:
+  logging.exception("Error removing temporary database")
+  raise
 
 if config["donedir"] is not None:
   logging.info("Moving backed up archive into done directory")
