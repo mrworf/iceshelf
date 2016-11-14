@@ -88,27 +88,79 @@ if $VALIDATE; then
 elif $EXPORT; then
   rm key-* >/dev/null 2>/dev/null
   gpg --export-secret-key "${ITEM}" | base64 | split -d -b 2048 - key-
+  PARTS=0
   for F in key-0[0-9]; do
+    PARTS=$(($PARTS + 1))
     qrencode < $F -o $F.png
     rm $F
   done
   cat >key.html <<EOF
 <html>
+<head>
 <style>
+ h1 {
+  margin: 0px;
+ }
+
+ pre {
+  border: 1px solid black;
+  padding: 5px;
+  margin: 5px;
+ }
  @media print {
      img {
          width:100%;
          height:auto;
-         page-break-after:always
+        image-rendering: -moz-crisp-edges;
+        image-rendering: -o-crisp-edges;
+        image-rendering: -webkit-optimize-contrast;
+        -ms-interpolation-mode: nearest-neighbor;
+        image-rendering: pixelated;
+     }
+
+     h2 {
+         page-break-before:always
      }
  }
  </style>
- <head><title>$ITEM</title></head>
+ <title>Private/Secret GPG Key for "$ITEM"</title>
+ </head>
  <body>
- <h1>Your key in QR codes</h1>
+ <h1>Private/Secret GPG Key for "$ITEM"</h1>
+ <h3>Generated $(date)</h3>
+ <p>
+ Please print out this and keep it for your records. If you used a passphrase with this key,
+ do NOT write it down on the same paper as it would make it useless.
+</p>
+<p>
+If you ever loose the script which generated these pages, here's how you restore it manually:
+<pre>
+zbarimg <b>filename.pdf</b> --raw -q | replace "QR-Code:" "" | base64 -d &gt;secret-key.gpg
+</pre>
+</p>
+<p>
+Or if you have each QR code as a separate image, do this in sequence:
+<pre>
 EOF
+  I=0
   for F in key-0[0-9].png; do
-    echo >>key.html "$F:<br><img src=\"$F\"><br>"
+    I=$(($I + 1))
+    if [ $I -eq 1 ]; then
+      E=" "
+    else
+      E="&gt;"
+    fi
+    echo >>key.html "zbarimg <b>file $I of $PARTS</b> --raw -q | replace \"QR-Code:\" \"\" $E&gt; secret-key.b64.txt"
+  done
+cat >>key.html <<EOF
+base64 -d &lt;secret-key.b64.txt &gt;secret-key.gpg
+</pre>
+</p>
+EOF
+  I=0
+  for F in key-0[0-9].png; do
+    I=$(($I + 1))
+    echo >>key.html "<h2>Part $I of $PARTS</h2><img src=\"$F\"><br>"
   done
   echo >>key.html "</body></html>"
 
