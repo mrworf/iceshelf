@@ -94,6 +94,7 @@ elif $EXPORT; then
     qrencode < $F -o $F.png
     rm $F
   done
+  DATE="$(date)"
   cat >key.html <<EOF
 <html>
 <head>
@@ -103,10 +104,21 @@ elif $EXPORT; then
  }
 
  pre {
-  border: 1px solid black;
-  padding: 5px;
+  border: 2px dashed black;
+  padding: 15px;
   margin: 5px;
  }
+
+ hr {
+  border: 0px;
+  border-bottom: 1px solid black;
+  height: 18pt;
+ }
+
+div {
+  width: 100%;
+}
+
  @media print {
      img {
          width:100%;
@@ -118,6 +130,12 @@ elif $EXPORT; then
         image-rendering: pixelated;
      }
 
+    div {
+      position: fixed;
+      bottom: 0px;
+      width: 100%;
+    }
+
      h2 {
          page-break-before:always
      }
@@ -127,7 +145,7 @@ elif $EXPORT; then
  </head>
  <body>
  <h1>Private/Secret GPG Key for "$ITEM"</h1>
- <h3>Generated $(date)</h3>
+ <h3>Generated $DATE</h3>
  <p>
  Please print out this and keep it for your records. If you used a passphrase with this key,
  do NOT write it down on the same paper as it would make it useless.
@@ -156,11 +174,20 @@ cat >>key.html <<EOF
 base64 -d &lt;secret-key.b64.txt &gt;secret-key.gpg
 </pre>
 </p>
+<div>
+<h3>
+  Notes:
+</h3>
+<hr>
+<hr>
+<hr>
+<hr>
+</div>
 EOF
   I=0
   for F in key-0[0-9].png; do
     I=$(($I + 1))
-    echo >>key.html "<h2>Part $I of $PARTS</h2><img src=\"$F\"><br>"
+    echo >>key.html "<h2>Part $I of $PARTS - $DATE</h2><img src=\"$F\"><br>"
   done
   echo >>key.html "</body></html>"
 
