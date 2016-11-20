@@ -1,0 +1,52 @@
+#!/bin/sh
+#
+#
+SHOWSUCCESS=true
+CONF=/home/iceshelf/iceshelf.conf
+
+# Allow you to override the defaults above without having to
+# edit this file.
+#
+if [ -f /home/iceshelf/cronjob.conf ]; then
+	source /home/iceshelf/cronjob.conf
+fi
+
+############# DO NOT CHANGE ANYTHING BELOW THIS POINT #####################
+#
+TMPLOG=$(sudo -Hu iceshelf mktemp /tmp/iceshelf.log.XXXXX)
+RET=0
+
+if [ -z "$TMPLOG" ]; then
+	echo "ERROR: User iceshelf does not exist" >&2
+	exit 255
+fi
+if [ ! -f "$CONF" ]; then
+	echo "ERROR: Configuration $CONF was not found" >&2
+	exit 255
+fi
+
+# Avoid emails about stuff unless it did something
+sudo -Hu iceshelf /home/iceshelf/iceshelf/iceshelf --changes --logfile $TMPLOG $CONF
+RET=$?
+if [ $RET -eq 1 ]; then
+	# Changes detected, clear old log and do a real run
+	echo -n >$TMPLOG ""
+	sudo -Hu iceshelf /home/iceshelf/iceshelf/iceshelf --logfile $TMPLOG $CONF
+	RET=$?
+	if $SHOWSUCCESS && [ $RET -eq 0 ]; then
+		echo "SHOWSUCCESS is TRUE, showing result of successfull run" >&2
+		echo "======================================================" >&2
+		cat $TMPLOG >&2;
+	fi
+fi
+if [ $RET -ne 0 ]; then
+	echo "Backup failed with error code $RET, this is what happened:" >&2
+	echo "==========================================================" >&2
+	cat $TMPLOG >&2
+fi
+
+# Always keep a log of all activities
+cat $TMPLOG >> /var/log/iceshelf.log
+rm $TMPLOG
+
+exit $RET
