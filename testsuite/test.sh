@@ -52,6 +52,11 @@ detect move: yes
 EOF
 }
 
+function lastFolder() {
+  F=$(ls -1t done/ | head -n1)
+  echo "done/$F/"
+}
+
 function lastArchive() {
   T=$(ls -1rt done/ | tail -1)
   TT=$(ls -1rt done/$T | grep tar | grep -v par)
@@ -215,7 +220,7 @@ fi
 
 if [ "$1" == "short" ]; then
   echo "Running normal use-case only! NOT A COMPLETE TEST RUN!"
-  VARIATIONS=("normal")
+  VARIATIONS=("encrypted")
 fi
 
 # Runs through ALL the versions...
@@ -236,6 +241,8 @@ for V in "${VARIATIONS[@]}"; do
   initialize
   generateConfig regular "$EXTRAS"
   generateConfig prefix "[options]\nprefix: prefixed-\n$EXTRAS"
+  generateConfig filelist "[options]\ncreate filelist: yes\n$EXTRAS"
+  generateConfig encryptmani "[security]\nencrypt manifest: yes\n$EXTRAS"
 
   runTest "Initial backup" "" "" regular
 
@@ -289,6 +296,30 @@ Only in content: dd"
   runTest "Move file and copy the same as well" "" "" regular "Only in compare/content: e
 Only in content: ee"
 
+  rm content/ee content/eee
+  runTest "Remove two files and generate backup with filelist and verify checksums" "" '
+  function posttest() {
+    pushd $(lastFolder)
+    if ! shasum -c filelist.txt ; then
+      echo "filelist.txt checksum failed"
+      return 1
+    fi
+    popd
+  }
+  ' filelist "Only in compare/content: ee
+Only in compare/content: eee"
+
+  if [[ "$V" == *"encrypted"* ]]; then
+    cp content/q content/qq
+    runTest "Copy file and use encrypted manifest" "" '
+    function posttest() {
+      if ! ls -1 $(lastFolder) | grep json.gpg ; then
+        echo "No encrypted json was found"
+        return 1
+      fi
+    }
+    ' encryptmani ""
+  fi
 done
 
 echo -e "\nAll tests ended successfully"

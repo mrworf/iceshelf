@@ -173,10 +173,6 @@ Note that switching between various methods will cause the next backup to be a f
 Save a delta manifest with the archive as separate file. This is essentially a JSON file with the filenames and their checksums. Handy if you ever loose the entire local database since you can download all your manifests in order to locate the missing file.
 
 Please keep in-mind that this is a *delta* manifest, it does not contain anything but the files in this backup, there are no references to any other files from previous backups.
-There are a total of three settings for this option:
- - Yes: Generates the delta manifest and stores it as a separate file
- - No: Does not generate a delta manifest
- - Encrypt: Generates the delta manifest and encrypts it with the same key as the backup archive. If signature key is provided, it will also be signed. Keep in mind that this setting will cause the backup to fail should you not provide an encryption key in the `[security]` section.
 
 *default is `yes`*
 
@@ -225,6 +221,12 @@ This is an *experimental* feature which tries to detect when you've just moved a
 It's a very new feature and should be used with caution. It will track what backup the original file was in and what the name was, so it should be able to provide details for restore of moved files, but it's not 100% tested.
 
 *default is `no`*
+
+#### create filelist
+
+Adds an additional file, called `filelist.txt` which is a shasum compatible file which details the hash of each file in the backup (the produced backup files, not the backed up files) as well as their corresponding sha1 which can be checked with shasum, like so `shasum -c filelist.txt`. This is to tell you what files belong to the backup.
+
+*default is `yes`*
 
 ### Section [exclude]
 
@@ -340,6 +342,12 @@ See `add parity` for dealing with damaged archive files.
 If your signature key needs a passphrase, this is the place you put it.
 
 *default is blank*
+
+#### encrypt manifest
+
+If you're worried that the use of a manifest file (which describes the changes contained in the backup, see `delta manifest` under `options`), specifying this option will encrypt the manifest as well (using the same key as `encrypt` above). If you haven't enabled `delta manifest`, this option has no effect.
+
+*default is `yes`*
 
 #### add parity
 

@@ -266,6 +266,24 @@ def gatherData():
         return None
 
   # Security for all companion files...
+  if config["encrypt"] and config["encrypt-manifest"] and config["manifest"]:
+    # User wants manifest encrypted too
+    logging.info("Encrypting manifest")
+    with open(file_manifest, 'rb') as fp:
+      gpg.encrypt_file(
+        fp,
+        config["encrypt"],
+        passphrase=config["encrypt-pw"],
+        armor=True,
+        output=file_manifest+".gpg"
+      )
+    if not os.path.exists(file_manifest + ".gpg"):
+      logging.error("GnuPG didn't produce an encrypted file. Please make sure GnuPG is installed and running properly")
+      return None
+    # Remove old content
+    os.remove(file_manifest)
+    file_manifest += ".sig"
+
   if config["sign"]:
     if config["manifest"]:
       logging.info("Signing manifest")
@@ -300,8 +318,9 @@ def gatherData():
             return None
           # Remove old content
           os.remove(f)
+  if config["create-filelist"]:
+    fileutils.generateFilelist(config["prepdir"])
   return os.listdir(config["prepdir"])
-
 
 #####################
 

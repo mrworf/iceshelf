@@ -31,6 +31,8 @@ setting = {
   "detect-move": False,
   "create-paths": False,
   "skip-empty": False,
+  "encrypt-manifest" : True,
+  "create-filelist" : True,
 }
 
 def getVersion():
@@ -72,6 +74,10 @@ def parse(filename):
   config.set("options", "persuasive", "no")
   config.set("options", "detect move", "no")
   config.set("options", "skip empty", "no")
+  config.set("options", "ignore overlimit", "no")
+  config.set("options", "change method", "sha1")
+  config.set("options", "max keep", "0")
+  config.set("options", "create filelist", "yes")
 
   config.add_section("glacier")
   config.set("glacier", "config", "")
@@ -83,6 +89,7 @@ def parse(filename):
   config.set("security", "encrypt phrase", "")
   config.set("security", "sign phrase", "")
   config.set("security", "add parity", "0")
+  config.set("security", "encrypt manifest", "yes")
 
 
   # Read user settings
@@ -101,12 +108,23 @@ def parse(filename):
     setting["sign"] = config.get("security", "sign")
   if config.get("security", "sign phrase") != "":
     setting["sign-pw"] = config.get("security", "sign phrase")
+  if config.get("security", "encrypt manifest").lower() not in ["yes", "no"]:
+    logging.error("encrypt manifest has to be yes/no")
+    return None
+  elif config.get("security", "encrypt manifest").lower() == "no":
+    setting["encrypt-manifest"] = False
 
   if config.get("options", "delta manifest").lower() not in ["yes", "no"]:
     logging.error("Delta Manifest has to be yes/no")
     return None
   elif config.get("options", "delta manifest").lower() == "no":
     setting["manifest"] = False
+
+  if config.get("options", "create filelist").lower() not in ["yes", "no"]:
+    logging.error("create filelist has to be yes/no")
+    return None
+  elif config.get("options", "create filelist").lower() == "no":
+    setting["create-filelist"] = False
 
   if config.get("options", "persuasive").lower() not in ["yes", "no"]:
     logging.error("persuasive has to be yes/no")
