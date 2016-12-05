@@ -9,8 +9,8 @@ EXEC=/home/${USER}/iceshelf/iceshelf
 # Allow you to override the defaults above without having to
 # edit this file.
 #
-if [ -f "${CONF}" ]; then
-	source "${CONF}"
+if [ -f "/etc/defaults/iceshelf" ]; then
+	source "/etc/defaults/iceshelf"
 fi
 
 ############# DO NOT CHANGE ANYTHING BELOW THIS POINT #####################
