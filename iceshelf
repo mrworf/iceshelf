@@ -639,7 +639,7 @@ try:
   shutil.copy(config["file-checksum"] + "_tmp", config["file-checksum"])
 except OSError as e:
   if e.errno == 1:
-    logging.warn("Unable to change permissons on copied file")
+    logging.debug("Unable to change permissons on copied file: %s" % config["file-checksum"])
   else:
     logging.exception("Error copying file")
     raise
@@ -662,7 +662,7 @@ if config["donedir"] is not None:
       )
     except OSError as e:
       if e.errno == 1:
-        logging.warn("Unable to change permissons on copied file")
+        logging.debug("Unable to change permissons on copied file: %s" % dest)
       else:
         logging.exception("Error copying file")
         raise
