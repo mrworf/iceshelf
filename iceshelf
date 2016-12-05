@@ -282,7 +282,7 @@ def gatherData():
       return None
     # Remove old content
     os.remove(file_manifest)
-    file_manifest += ".sig"
+    file_manifest += ".gpg"
 
   if config["sign"]:
     if config["manifest"]:

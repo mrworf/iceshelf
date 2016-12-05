@@ -2,22 +2,24 @@
 #
 #
 SHOWSUCCESS=true
-CONF=/home/iceshelf/iceshelf.conf
+USER=iceshelf
+CONF=/home/${USER}/iceshelf.conf
+EXEC=/home/${USER}/iceshelf/iceshelf
 
 # Allow you to override the defaults above without having to
 # edit this file.
 #
-if [ -f /home/iceshelf/cronjob.conf ]; then
-	source /home/iceshelf/cronjob.conf
+if [ -f "${CONF}" ]; then
+	source "${CONF}"
 fi
 
 ############# DO NOT CHANGE ANYTHING BELOW THIS POINT #####################
 #
-TMPLOG=$(sudo -Hu iceshelf mktemp /tmp/iceshelf.log.XXXXX)
+TMPLOG=$(sudo -Hu ${USER} mktemp /tmp/iceshelf.log.XXXXX)
 RET=0
 
 if [ -z "$TMPLOG" ]; then
-	echo "ERROR: User iceshelf does not exist" >&2
+	echo "ERROR: User ${USER} does not exist" >&2
 	exit 255
 fi
 if [ ! -f "$CONF" ]; then
@@ -26,12 +28,12 @@ if [ ! -f "$CONF" ]; then
 fi
 
 # Avoid emails about stuff unless it did something
-sudo -Hu iceshelf /home/iceshelf/iceshelf/iceshelf --changes --logfile $TMPLOG $CONF
+sudo -Hu ${USER} ${EXEC} --changes --logfile $TMPLOG $CONF
 RET=$?
 if [ $RET -eq 1 ]; then
 	# Changes detected, clear old log and do a real run
 	echo -n >$TMPLOG ""
-	sudo -Hu iceshelf /home/iceshelf/iceshelf/iceshelf --logfile $TMPLOG $CONF
+	sudo -Hu ${USER} ${EXEC} --logfile $TMPLOG $CONF
 	RET=$?
 	if $SHOWSUCCESS && [ $RET -eq 0 ]; then
 		echo "SHOWSUCCESS is TRUE, showing result of successfull run" >&2
