@@ -292,6 +292,7 @@ def gatherData():
           fp,
           keyid=config["sign"],
           passphrase=config["sign-pw"],
+          clearsign=False,
           output=file_manifest+".asc"
         )
       if not os.path.exists(file_manifest + ".asc"):
