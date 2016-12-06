@@ -1,7 +1,19 @@
 import os.path
 import os
 import hashlib
+import shutil
+import logging
 from subprocess import Popen, PIPE
+
+def copy(src, dst):
+  try:
+    shutil.copy(src, dst)
+  except OSError as e:
+    if e.errno == 1:
+      logging.debug("Unable to change permissons on copied file: %s" % dst)
+    else:
+      logging.exception("Error copying file: %s" % src)
+      raise
 
 def deleteTree(tree, include_self=False):
   for root, dirs, files in os.walk(tree, topdown=False):
@@ -16,6 +28,17 @@ def generateParity(filename, level):
   if level is 0:
     return False
   cmd = ["par2", "create", "-r"+str(level), filename]
+  p = Popen(cmd, stdout=PIPE, stderr=PIPE)
+  out, err = p.communicate()
+  if p.returncode != 0:
+    print "Command: " + repr(cmd)
+    print "Output: " + out
+    print "Error : " + err
+    print "Code  : " + str(p.returncode)
+  return p.returncode == 0
+
+def repairParity(filename):
+  cmd = ["par2", "r", filename]
   p = Popen(cmd, stdout=PIPE, stderr=PIPE)
   out, err = p.communicate()
   if p.returncode != 0:

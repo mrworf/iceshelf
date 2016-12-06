@@ -52,7 +52,7 @@ def isCompatible(version):
   except:
     return False
 
-def parse(filename):
+def parse(filename, onlysecurity=False):
   config = ConfigParser.ConfigParser()
   # Some sane defaults
 
@@ -96,7 +96,7 @@ def parse(filename):
   config.read(filename)
 
   # Validate the config
-  if len(config.options("sources")) == 0:
+  if len(config.options("sources")) == 0 and not onlysecurity:
     logging.error("You don't have any sources defined")
     return None
 
@@ -113,6 +113,10 @@ def parse(filename):
     return None
   elif config.get("security", "encrypt manifest").lower() == "no":
     setting["encrypt-manifest"] = False
+
+  # Exit early if we don't need more than security
+  if onlysecurity:
+    return setting
 
   if config.get("options", "delta manifest").lower() not in ["yes", "no"]:
     logging.error("Delta Manifest has to be yes/no")
@@ -210,7 +214,7 @@ def parse(filename):
   elif config.getint("security", "add parity") > 0:
     setting["parity"] = config.getint("security", "add parity")
     if setting["maxsize"] > 34359738367 or setting["maxsize"] == 0:
-      logging.warn("max size is limited to 32GB when using parity, changing setting accordingly")
+      logging.info("max size is limited to 32GB when using parity, changing \"max size\" setting")
       setting["maxsize"] = 34359738367 # (actually 32GB - 1 byte)
 
   if config.get("paths", "create paths").lower() not in ["yes", "no"]:
