@@ -311,6 +311,7 @@ def gatherData():
               keyid=config["sign"],
               passphrase=config["sign-pw"],
               binary=True,
+              clearsign=False,
               output=f+".sig"
             )
           if not os.path.exists(f + ".sig"):
