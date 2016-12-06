@@ -1,0 +1,204 @@
+#!/usr/bin/env python
+#
+# This tool will take a iceshelf backup and restore it to a
+# designated folder, following any directives stored in the
+# manifest file.
+#
+# NOTE! Will not do anything if a manifest is missing.
+#
+##############################################################################
+
+import logging
+import argparse
+import sys
+import os.path
+import json
+from datetime import datetime
+import time
+import shutil
+import tarfile
+import gnupg
+import re
+from subprocess import Popen, PIPE
+
+import modules.configuration as configuration
+import modules.fileutils as fileutils
+import modules.helper as helper
+
+def validArchive(baseDir, corruptFiles):
+  # Start with validating all files and confirm existance of files
+  p = re.compile('([a-f0-9]+)\s+([^\s]+)')
+  criticalerror = False
+  archivecorrupt = False
+  paritycount = 0
+  with open(os.path.join(baseDir, "filelist.txt"), "r") as f:
+    for line in f:
+      res = p.match(line)
+      if res:
+        if os.path.exists(os.path.join(baseDir, res.group(2))):
+          sha = fileutils.hashFile(os.path.join(baseDir, res.group(2)), 'sha1')
+          if sha != res.group(1):
+            corruptFiles.append(res.group(2))
+            if ".json" in line:
+              logging.error('Manifest is corrupt, please restore manually')
+              criticalerror = True
+            elif ".tar" in line:
+              logging.warn('Archive is corrupt, will try repair')
+              archivecorrupt = True
+            elif ".par2" in line:
+              logging.warn('Parity file "%s" is corrupt and will not be used' % res.group(2))
+          elif ".par2" in line:
+            paritycount += 1
+        else:
+          logging.error('File "%s" is missing from backup' % res.group(2))
+          return False
+      else:
+        logging.error("filelist.txt is corrupt")
+        return False
+  if archivecorrupt and paritycount == 0:
+    logging.error('Archive is corrupt and no available parity files')
+    criticalerror = True
+  return criticalerror == False
+
+def stripFile(filename):
+  global config
+  gpg = gnupg.GPG()
+  destfile = filename
+
+  logging.info("Processing %s" % filename)
+
+  if filename.endswith('.sig') or filename.endswith('.asc'):
+    verification = None
+    with open(filename, 'rb') as f:
+      verification = gpg.verify_file(f)
+    if verification is None or verification.trust_level < verification.TRUST_FULLY:
+      logging.error('Signature isn\'t trusted (%s): %s' % (verification.status, filename))
+      return None
+
+  if filename.endswith('.gpg.sig') or filename.endswith('.gpg.asc'):
+    destfile = destfile[0:-4]
+  else:
+    destfile = filename
+
+  if destfile.endswith('.sig') or destfile.endswith('.asc') or destfile.endswith('.gpg'):
+    destfile = destfile[0:-4]
+    result = None
+    if os.path.exists(destfile):
+      os.remove(destfile)
+    with open(filename, 'rb') as f:
+      result = gpg.decrypt_file(f,
+                                always_trust=True,
+                                passphrase=config['encrypt-pw'],
+                                output=destfile)
+    if result is None:
+      logging.error('Unable to decrypt (unknown reason): %s' % filename)
+      return None
+    if result is None or not os.path.exists(destfile):
+      logging.error('Unable to decrypt (%s): %s' % (result.status, filename))
+      return None
+  elif filename != destfile:
+    fileutils.copy(filename, destfile)
+
+  return destfile
+
+
+""" Parse command line """
+parser = argparse.ArgumentParser(description="Iceshelf Restore - Restores the contents of an iceshelf backup", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+parser.add_argument('--logfile', metavar="FILE", help="Log to file instead of stdout")
+parser.add_argument('--debug', action='store_true', default=False, help='Adds more details to the log output')
+parser.add_argument('--list', action='store_true', default=False, help='Lists changes inside backup')
+parser.add_argument('--dryrun', action='store_true', default=False, help='Shows what would happen if you run')
+parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
+parser.add_argument('backup', metavar="BACKUP", help="Folder containing an iceshelf backup")
+parser.add_argument('destination', metavar="DEST", help="Destination folder")
+cmdline = parser.parse_args()
+
+""" Setup logging first """
+logging.getLogger('').handlers = []
+loglevel=logging.INFO
+if cmdline.logfile:
+  logformat=u'%(asctime)s - %(levelname)s - %(message)s'
+else:
+  logformat=u'%(message)s'
+if cmdline.debug:
+  loglevel=logging.DEBUG
+  logformat=u'%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s'
+
+logging.basicConfig(stream=sys.stdout, filename=cmdline.logfile, level=loglevel, format=logformat)
+logging.getLogger("gnupg").setLevel(logging.WARNING)
+logging.getLogger("shutil").setLevel(logging.WARNING)
+
+# Make sure we have the correct gnupg module
+if not "encrypt_file" in dir(gnupg.GPG()):
+  logging.error("Current GnuPG python module does not support file encryption, please check FAQ section in documentation")
+  sys.exit(255)
+
+#######################
+
+config = configuration.parse(cmdline.config, True)
+if config is None:
+  logging.error("Configuration is broken, please check %s" % cmdline.config)
+  sys.exit(1)
+
+files = os.listdir(cmdline.backup);
+
+fileManifest = None
+fileArchive = None
+
+parity = False
+filelist = False
+corruptFiles = []
+processedFiles = []
+skipParity = False
+
+for f in files:
+  if ".json" in f:
+    fileManifest = f
+  elif ".par2" in f:
+    fileParity = f
+  elif ".tar" in f:
+    fileArchive = f
+  elif f == "filelist.txt":
+    filelist = True
+
+if fileManifest is None:
+  logging.error("No manifest found, unable to restore")
+  sys.exit(1)
+if fileArchive is None:
+  logging.error("No archive found, unable to restore")
+  sys.exit(1)
+
+logging.info('Using manifest "%s"' % repr(fileManifest))
+if fileParity is not None:
+  logging.info("Parity is available")
+
+if filelist and not validArchive(cmdline.backup, corruptFiles):
+  sys.exit(1)
+
+# Strip all files except archive (ie, verify signature and decrypt)
+# since archive might need repairs and for that we need PAR2
+for f in files:
+  if f in corruptFiles:
+    continue
+  if f == fileArchive:
+    continue
+  n = stripFile(os.path.join(cmdline.backup, f))
+  if n is None:
+    logging.error('Unable to process "%s"' % f)
+    sys.exit(1)
+  else:
+    processedFiles.append(n)
+
+if fileParity is not None and len(corruptFiles) > 0:
+  logging.info("Need parity repair")
+  for f in processedFiles:
+    if f.endswith(fileArchive + '.par2'):
+      fileutils.repairParity(f)
+      break
+
+# Strip the archive
+archive = stripFile(os.path.join(cmdline.backup, fileArchive))
+if archive is None:
+  logging.error('Unable to process "%s"' % fileArchive)
+
+# And now... do stuff (TODO)
