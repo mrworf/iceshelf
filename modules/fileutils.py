@@ -46,6 +46,12 @@ def repairParity(filename):
     print "Output: " + out
     print "Error : " + err
     print "Code  : " + str(p.returncode)
+  else:
+    # Remove the corrupt file
+    if filename[-5:] == '.par2':
+      os.unlink(filename[0:-5] + '.1')
+    else:
+      os.unlink(filename + '.1')
   return p.returncode == 0
 
 def hashFile(file, shatype):
