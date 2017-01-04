@@ -43,6 +43,7 @@ import modules.fileutils as fileutils
 import modules.helper as helper
 import modules.glacier as glacier
 
+lastBackup = None
 oldMoves = {}
 oldFiles = {}
 newFiles = {}
@@ -220,7 +221,7 @@ def gatherData():
       if k not in movedFiles.values():
         tmp2.append(k)
 
-    manifest = {"modified" : tmp1, "deleted" : tmp2, "moved" : movedFiles}
+    manifest = {"modified" : tmp1, "deleted" : tmp2, "moved" : movedFiles, "previousbackup" : lastBackup}
     with open(file_manifest, "wb") as fp:
       json.dump(manifest, fp)
 
@@ -372,6 +373,8 @@ if os.path.exists(config["file-checksum"]):
       oldVault = oldSave["vault"]
       if 'moved' in oldSave:
         oldMoves = oldSave["moved"]
+      if 'lastbackup' in oldSave:
+        lastBackup = oldSave["lastbackup"]
   logging.info(
     "State loaded, last run was %s using version %s",
     datetime.fromtimestamp(oldSave["timestamp"]).strftime("%c"),
@@ -631,7 +634,8 @@ saveData = {
   "dataset" : oldFiles,
   "backups" : backupSets,
   "vault" : config["glacier-vault"],
-  "moved" : movedFiles
+  "moved" : movedFiles,
+  "lastbackup" : config["prefix"] + config["unique"]
 }
 with open(config["file-checksum"] + "_tmp", "wb") as fp:
   json.dump(saveData, fp)
