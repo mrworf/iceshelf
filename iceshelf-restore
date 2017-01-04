@@ -120,13 +120,12 @@ def stripFile(filename):
 parser = argparse.ArgumentParser(description="Iceshelf Restore - Restores the contents of an iceshelf backup", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--logfile', metavar="FILE", help="Log to file instead of stdout")
 parser.add_argument('--debug', action='store_true', default=False, help='Adds more details to the log output')
-parser.add_argument('--restore', action='store_true', default=False, help='Extracts the backup')
+parser.add_argument('--restore', metavar="DEST", default=None, help='Extracts the backup')
 parser.add_argument('--list', action='store_true', default=False, help='List contents of backup (will not extract)')
 parser.add_argument('--lastbackup', metavar='LAST', help='If set, requires the backup to be the successor of LAST')
 parser.add_argument('--force', action='store_true', default=False, help='Even if manifest is missing, it will at least try to verify and repair archive')
 parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
 parser.add_argument('backup', metavar="BACKUP", help="Folder containing an iceshelf backup")
-parser.add_argument('destination', metavar="DEST", help="Destination folder")
 cmdline = parser.parse_args()
 
 """ Setup logging first """
@@ -266,13 +265,21 @@ if cmdline.lastbackup is not None:
     logging.error('Backup "%s" is not the successor of "%s"' % (os.path.basename(fileManifest)[0:-5], cmdline.lastbackup))
     sys.exit(1)
 
+# If available, show which backup that preceeded it
+if cmdline.list:
+  if 'lastbackup' in manifest:
+    logging.info('Manifest: Parent backup is "%s"' % manifest['lastbackup'])
+  else:
+    logging.debug('Manifest: Does not contain parent reference')
+
 # Now, print the files we're changing or creating
 filecount = 0
 fileerror = 0
 for k in manifest['modified']:
   v = manifest['modified'][k]
-  src = os.path.normpath(cmdline.destination + k)
-  logging.info('Manifest: Modified or new file "%s" in "%s"' % (os.path.basename(k), os.path.dirname(k)))
+  src = os.path.normpath(cmdline.restore + k)
+  if cmdline.list:
+    logging.info('Manifest: Modified or new file "%s" in "%s"' % (os.path.basename(k), os.path.dirname(k)))
   filecount += 1
 
 # Iterate the archive and make sure we know what's in it
@@ -300,8 +307,9 @@ if cmdline.restore:
 
 # Step 1: Remove any files that were deleted
 for f in manifest['deleted']:
-  src = os.path.normpath(cmdline.destination + f)
-  logging.info('Manifest: Deleting "%s"' % src)
+  src = os.path.normpath(cmdline.restore + f)
+  if cmdline.list:
+    logging.info('Manifest: Deleting "%s"' % src)
   if cmdline.restore:
     try:
       os.unlink(src);
@@ -310,9 +318,10 @@ for f in manifest['deleted']:
 
 for k in manifest['moved']:
   v = manifest['moved'][k]
-  src = os.path.normpath(cmdline.destination + v['original'])
-  dst = os.path.normpath(cmdline.destination + k)
-  logging.info('Manifest: Moving "%s" to "%s"' % (src, dst))
+  src = os.path.normpath(cmdline.restore + v['original'])
+  dst = os.path.normpath(cmdline.restore + k)
+  if cmdline.list:
+    logging.info('Manifest: Moving "%s" to "%s"' % (src, dst))
   if cmdline.restore:
     try:
       os.rename(src, dst)
@@ -327,8 +336,8 @@ if not cmdline.restore:
 with tarfile.open(archive, "r:*") as tar:
   item = tar.next()
   while item != None:
-    filename = os.path.normpath(cmdline.destination + "/" + item.name)
+    filename = os.path.normpath(cmdline.restore + "/" + item.name)
     logging.info('Extracting "%s" to "%s"' % (os.path.basename(filename), os.path.dirname(filename)))
-    tar.extract(item, cmdline.destination)
+    tar.extract(item, cmdline.restore)
     item = tar.next()
 logging.info("Backup has been restored")
