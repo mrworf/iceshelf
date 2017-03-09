@@ -253,7 +253,7 @@ def parse(filename, onlysecurity=False):
           return None
 
   if config.get("paths", "done dir") == "":
-    logging.error("Done dir cannot be empty")
+    setting["donedir"] = None
   elif not os.path.isdir(config.get("paths", "done dir")) and setting["create-paths"] == False:
     logging.error("Done dir doesn't exist")
     return None
