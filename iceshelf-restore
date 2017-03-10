@@ -25,7 +25,7 @@ import modules.configuration as configuration
 import modules.fileutils as fileutils
 import modules.helper as helper
 
-def validArchive(baseDir, corruptFiles, files):
+def validArchive(baseDir, filelist, corruptFiles, files):
   """
   Start with validating all files and confirm existance of files, using the filelist.txt
   """
@@ -34,7 +34,7 @@ def validArchive(baseDir, corruptFiles, files):
   archivecorrupt = False
   paritycount = 0
   del files[:]
-  with open(os.path.join(baseDir, "filelist.txt"), "r") as f:
+  with open( os.path.join(baseDir, filelist), "r") as f:
     for line in f:
       res = p.match(line)
       if res:
@@ -79,8 +79,7 @@ def validateFile(filename):
     if verification is None or verification.trust_level < verification.TRUST_FULLY:
       logging.error('Signature isn\'t trusted (%s): %s' % (verification.status, filename))
       return False
-    return True
-  return False
+  return True
 
 def stripFile(filename):
   global config
@@ -115,6 +114,21 @@ def stripFile(filename):
 
   return destfile
 
+def getBackupFiles(itemFromBackup):
+  # Get the files in that folder and filter out the ones not part of the backup
+  basename, ignore = os.path.basename(itemFromBackup).split('.', 1)
+  basepath = os.path.dirname(itemFromBackup)
+  if basepath == '':
+    basepath = './'
+  unfiltered = os.listdir(basepath)
+  files = []
+  for f in unfiltered:
+    if os.path.basename(f).startswith(basename) or f == "filelist.txt":
+      logging.debug('Found backup file "%s"' % f)
+      files.append(f)
+  return (basepath, files)
+
+
 
 """ Parse command line """
 parser = argparse.ArgumentParser(description="Iceshelf Restore - Restores the contents of an iceshelf backup", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -125,7 +139,7 @@ parser.add_argument('--list', action='store_true', default=False, help='List con
 parser.add_argument('--lastbackup', metavar='LAST', help='If set, requires the backup to be the successor of LAST')
 parser.add_argument('--force', action='store_true', default=False, help='Even if manifest is missing, it will at least try to verify and repair archive')
 parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
-parser.add_argument('backup', metavar="BACKUP", help="Folder containing an iceshelf backup")
+parser.add_argument('backup', metavar="BACKUP", help="File from an iceshelf backup")
 cmdline = parser.parse_args()
 
 """ Setup logging first """
@@ -155,13 +169,18 @@ if config is None:
   logging.error("Configuration is broken, please check %s" % cmdline.config)
   sys.exit(1)
 
-files = os.listdir(cmdline.backup);
+if not os.path.isfile(cmdline.backup):
+  logging.error('"%s" is not a file' % cmdline.backup)
+  sys.exit(1)
+
+basepath, files = getBackupFiles(cmdline.backup)
 
 fileManifest = None
 fileArchive = None
 
 parity = False
-filelist = False
+filelist = None
+oldfilelist = False
 corruptFiles = []
 processedFiles = []
 skipParity = False
@@ -173,8 +192,10 @@ for f in files:
     fileParity = f
   elif ".tar" in f:
     fileArchive = f
+  elif f.endswith(".lst"):
+    filelist = f
   elif f == "filelist.txt":
-    filelist = True
+    oldfilelist = True
 
 if fileManifest is None:
   if cmdline.force:
@@ -192,8 +213,13 @@ if fileParity is not None:
   logging.debug("Parity is available")
 
 # If we have a filelist, use it to confirm files
-if filelist and not validArchive(cmdline.backup, corruptFiles, files) and not cmdline.force:
+if filelist and not validArchive(basepath, filelist, corruptFiles, files) and not cmdline.force:
   sys.exit(1)
+elif oldfilelist:
+  logging.warn('Using older "filelist.txt" instead of new format using file ending in ".lst"')
+  if not validArchive(basepath, "filelist.txt", corruptFiles, files) and not cmdline.force:
+    sys.exit(1)
+
 
 # Strip all files except archive (ie, verify signature and decrypt)
 # since archive might need repairs and for that we need PAR2
@@ -202,7 +228,7 @@ for f in files:
     continue
   if f == fileArchive:
     continue
-  if not validateFile(os.path.join(cmdline.backup, f)):
+  if not validateFile(os.path.join(basepath, f)):
     logging.error('File "%s" signature does not match' % f)
     if not cmdline.force:
       sys.exit(1)
@@ -214,7 +240,7 @@ for f in files:
   if f != fileManifest and not cmdline.restore:
     continue
 
-  n = stripFile(os.path.join(cmdline.backup, f))
+  n = stripFile(os.path.join(basepath, f))
   if n is None:
     logging.error('Unable to process "%s"' % f)
     sys.exit(1)
@@ -239,11 +265,11 @@ if cmdline.restore and fileParity is not None and len(corruptFiles) > 0:
 
 # Strip the archive
 if cmdline.restore:
-  if not validateFile(os.path.join(cmdline.backup, fileArchive)):
+  if not validateFile(os.path.join(basepath, fileArchive)):
     logging.error('File "%s" signature does not match' % fileArchive)
     if not cmdline.force:
       sys.exit(1)
-  archive = stripFile(os.path.join(cmdline.backup, fileArchive))
+  archive = stripFile(os.path.join(basepath, fileArchive))
   if archive is None:
     logging.error('Unable to process "%s"' % fileArchive)
     sys.exit(1)

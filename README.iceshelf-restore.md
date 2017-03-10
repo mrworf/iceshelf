@@ -16,7 +16,7 @@ Backup must be alone in a directory, you cannot store multiple backups in a fold
 
 # Usage
 
-In it's simplest form, you must provide the same configuration file as used by `iceshelf` and a directory holding the backup. This will simply validate your backup and if valid, the exit code will be `0` while if there is an issue, you'll be told what and it also returns a non-zero exit code.
+In it's simplest form, you must provide the same configuration file as used by `iceshelf` and one of the files from the backup. This will simply validate your backup and if valid, the exit code will be `0` while if there is an issue, you'll be told what and it also returns a non-zero exit code.
 
 Note! If the archive is corrupt, it will only tell you if there is the possibility to repair it. It is *NO GUARANTEE* that you actually can.
 
