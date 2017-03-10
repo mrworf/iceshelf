@@ -67,8 +67,8 @@ def sumSize(path, files):
     result += os.path.getsize(os.path.join(path, f))
   return result
 
-def generateFilelist(path):
+def generateFilelist(path, output):
   files = os.listdir(path)
-  with open(os.path.join(path, "filelist.txt"), 'wb') as lst:
+  with open(output, 'wb') as lst:
     for f in files:
       lst.write('{}  {}\n'.format(hashFile(os.path.join(path, f), 'sha1'), f))

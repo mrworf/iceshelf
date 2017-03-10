@@ -4,10 +4,14 @@ ICESHELF=../iceshelf
 COUNT=0
 
 # Removes old data and creates fresh
-function initialize() {
-  # Clean and prep
+function cleanup() {
   rm -rf compare data tmp content done  >/dev/null 2>/dev/null
   rm config_* >/dev/null 2>/dev/null
+}
+
+function initialize() {
+  # Clean and prep
+  cleanup
   mkdir data tmp content done compare
 
   # Generate content
@@ -300,7 +304,7 @@ Only in content: ee"
   runTest "Remove two files and generate backup with filelist and verify checksums" "" '
   function posttest() {
     pushd $(lastFolder)
-    if ! shasum -c filelist.txt ; then
+    if ! shasum -c *.lst ; then
       echo "filelist.txt checksum failed"
       return 1
     fi
@@ -323,4 +327,5 @@ Only in compare/content: eee"
 done
 
 echo -e "\nAll tests ended successfully"
+cleanup
 exit 0

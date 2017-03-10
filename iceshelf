@@ -322,7 +322,7 @@ def gatherData():
           # Remove old content
           os.remove(f)
   if config["create-filelist"]:
-    fileutils.generateFilelist(config["prepdir"])
+    fileutils.generateFilelist(config["prepdir"], os.path.join(config["prepdir"], config["prefix"] + config["unique"]) + ".lst")
   return os.listdir(config["prepdir"])
 
 #####################
