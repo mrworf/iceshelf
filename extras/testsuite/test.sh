@@ -180,8 +180,12 @@ function runTest() {
   fi
 
   if $FAILED ; then
-    echo "FAILED! Diff is not matching expectations for ${ORIGINAL}:"
+    echo "=== FAILED! Diff is not matching expectations for ${ORIGINAL}:"
     echo "$DIFF"
+    echo "=== Contents of folder: content/"
+    ls -laR content/
+    echo "=== Contents of folder: compare/content/"
+    ls -laR compare/content/
     exit 255
   fi
 
@@ -193,6 +197,10 @@ function runTest() {
     fi
     unset -f posttest
   fi
+
+#  if [ "Move file and copy the same as well" == "$1" ]; then
+#    return 0
+#  fi
 
   # Final step, sync content with compare
   rsync -avr --delete content/ compare/content/ 2>&1 >/dev/null
@@ -298,8 +306,8 @@ for V in "${VARIATIONS[@]}"; do
   runTest "Moved file" "" "" regular "Only in compare/content: d
 Only in content: dd"
 
-  mv content/e content/ee
-  cp content/ee content/eee
+  mv content/e content/ee || echo "ERROR: moving content/e to content/ee"
+  cp content/ee content/eee || echo "ERROR: copying content/ee to content/eee"
   runTest "Move file and copy the same as well" "" "" regular "Only in compare/content: e
 Only in content: ee"
 
