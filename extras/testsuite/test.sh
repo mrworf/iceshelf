@@ -1,6 +1,9 @@
 #!/bin/bash
 
-ICESHELF=../iceshelf
+# First, make sure we're standing inside the testsuite area
+cd "$(dirname "$0")"
+
+ICESHELF=../../iceshelf
 COUNT=0
 
 # Removes old data and creates fresh
