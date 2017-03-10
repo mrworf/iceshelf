@@ -4,4 +4,4 @@ install:
   - sudo apt-get install par2
   - git clone https://github.com/uskudnik/amazon-glacier-cmd-interface.git
   - cd amazon-glacier-cmd-interface && sudo python setup.py install && cd ..
-script: pwd && ./extras/testsuite/test.sh
+script: ./extras/testsuite/test.sh
