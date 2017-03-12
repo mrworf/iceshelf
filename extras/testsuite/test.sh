@@ -183,11 +183,11 @@ function runTest() {
     echo "=== FAILED! Diff is not matching expectations for ${ORIGINAL}:"
     echo "$DIFF"
     echo "=== Contents of folder: content/ (now)"
-    ls -laR content/
+    ls -la content/
     echo "=== Contents of folder: content/ (before)"
     cat /tmp/before_content.txt
     echo "=== Contents of folder: compare/content/ (now)"
-    ls -laR compare/content/
+    ls -la compare/content/
     echo "=== Contents of folder: compare/content/ (before)"
     cat /tmp/before_compare.txt
     exit 255
@@ -207,8 +207,8 @@ function runTest() {
   fi
 
   # Before we sync, log folder structure
-  ls -laR content/ >/tmp/before_content.txt
-  ls -laR compare/content/ >/tmp/before_compare.txt
+  ls -la content/ >/tmp/before_content.txt
+  ls -la compare/content/ >/tmp/before_compare.txt
 
   # Final step, sync content with compare
   #rsync -avr --delete content/ compare/content/ 2>/dev/null >/dev/null
