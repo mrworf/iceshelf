@@ -72,6 +72,7 @@ parser.add_argument('--show', metavar='ARCHIVE', help='Shows members of a certai
 parser.add_argument('--modified', action='store_true', default=False, help='Show all files which exists multiple times due to modifications')
 parser.add_argument('--full', action='store_true', default=False, help='Full backup, regardless of changes to files')
 parser.add_argument('--list', type=str.lower, choices=['files', 'members', 'sets'], help='List currently backed up structure')
+parser.add_argument('--no-update', action='store_true', default=False, help="Checks for updates to iceshelf if available")
 parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
 cmdline = parser.parse_args()
 
@@ -96,6 +97,22 @@ if not "encrypt_file" in dir(gnupg.GPG()):
   sys.exit(255)
 
 #######################
+
+def checkNewVersion():
+  # First, see if there's a .git folder where we stand
+  if not os.path.exists('.git'):
+    return
+  try:
+    p = Popen(['git', 'fetch', 'origin' ], stdout=PIPE, stderr=PIPE)
+    out, err = p.communicate()
+    if p.returncode == 0:
+      p = Popen(['git', 'log', '--oneline', 'master..origin/master' ], stdout=PIPE, stderr=PIPE)
+      out, err = p.communicate()
+      if len(out) > 0:
+        logging.info("New version available")
+        logging.info("Changes: " + out)
+  except:
+    pass
 
 def shouldCompress():
   if currentOp["filesize"] == 0:
@@ -332,6 +349,10 @@ config = configuration.parse(cmdline.config)
 if config is None:
   logging.error("Configuration is broken, please check %s" % cmdline.config)
   sys.exit(1)
+
+# Check version
+if not cmdline.no_update:
+  checkNewVersion()
 
 # Also make sure any GnuPG key is available and valid
 if config["encrypt"] or config["sign"]:
