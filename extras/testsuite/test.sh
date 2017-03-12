@@ -237,22 +237,15 @@ fi
 if hash gpg ; then
   HASKEY=false
   if ! hasGPGconfig; then
-    echo "Generating test@test.test GPG key for test usage"
-    echo "Key-Type: RSA
-Key-Length: 2048
-Key-Usage: encrypt sign
-Subkey-Type: RSA
-Subkey-Length: 2048
-Name-Real: Tester
-Name-Comment: Test key used by iceshelf's testsuite
-Name-Email: test@test.test
-Expire-Date: 0
-Passphrase: test
-%commit" | gpg 2>/dev/null >/dev/null --gen-key --batch
+    echo "Importing test-key for test usage"
+    RESULT="$(gpg 2>&1 --fast-import test_key.*)"
+    RESULT2="$(echo "010034E91082BF022DBAF1FEA00E5EDACC9D1828:6:" | gpg 2>&1 --import-ownertrust)"
     if [ $? -eq 0 ] ; then
       HASKEY=true
     else
-      echo "WARNING: Unable to generate GPG key for testing, encryption will not be tested"
+      echo "=== WARNING: Unable to import GPG key for testing, encryption will not be tested"
+      echo "$RESULT"
+      echo "$RESULT2"
     fi
   else
     HASKEY=true
@@ -271,7 +264,7 @@ fi
 
 if [ "$1" == "short" ]; then
   echo "Running normal use-case only! NOT A COMPLETE TEST RUN!"
-  VARIATIONS=("encrypted")
+  VARIATIONS=("normal")
 fi
 
 # Runs through ALL the versions...
