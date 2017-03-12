@@ -172,7 +172,11 @@ function runTest() {
   fi
   FAILED=false
   if [ "$5" != "" ]; then
-    if [ "${DIFF}" != "$5" ]; then
+    if [ "${5:0:1}" == "^" ]; then
+      if ! [[ "${DIFF}" =~ $5 ]]; then
+        FAILED=true
+      fi
+    elif [ "${DIFF}" != "$5" ]; then
       FAILED=true
     fi
   elif [ "${DIFF}" != "" ]; then
@@ -181,17 +185,15 @@ function runTest() {
 
   if $FAILED ; then
     echo "=== FAILED! Diff is not matching expectations for ${ORIGINAL}:"
-    echo "$DIFF"
+    echo "'$DIFF'"
+    echo "=== Expected:"
+    echo "'$5'"
     echo "=== Iceshelf output:"
     echo "$RESULT"
-    echo "=== Contents of folder: content/ (now)"
+    echo "=== Contents of folder: content/"
     ls -la content/
-    echo "=== Contents of folder: content/ (before)"
-    cat /tmp/before_content.txt
-    echo "=== Contents of folder: compare/content/ (now)"
+    echo "=== Contents of folder: compare/content/"
     ls -la compare/content/
-    echo "=== Contents of folder: compare/content/ (before)"
-    cat /tmp/before_compare.txt
     exit 255
   fi
 
@@ -203,14 +205,6 @@ function runTest() {
     fi
     unset -f posttest
   fi
-
-  if [ "Move file and copy the same as well" == "$1" ]; then
-    return 0
-  fi
-
-  # Before we sync, log folder structure
-  ls -la content/ >/tmp/before_content.txt
-  ls -la compare/content/ >/tmp/before_compare.txt
 
   # Final step, sync content with compare
   #rsync -avr --delete content/ compare/content/ 2>/dev/null >/dev/null
@@ -318,12 +312,14 @@ for V in "${VARIATIONS[@]}"; do
   runTest "Moved file" "" "" regular "Only in compare/content: d
 Only in content: dd"
 
+  ### This has has a latent issue, iceshelf doesn't do deduplication which means
+  ### that sometimes it catches the eee as a rename instead of ee.
+  ### To solve this, we use regex to allow for both cases
+
   mv content/e content/ee || echo "ERROR: moving content/e to content/ee"
   cp content/ee content/eee || echo "ERROR: copying content/ee to content/eee"
-  runTest "Move file and copy the same as well" "" "" regular "Only in compare/content: e
-Only in content: ee"
-
-exit 0
+  runTest "Move file and copy the same as well" "" "" regular '^Only in compare/content: e
+Only in content: eee?$'
 
   rm content/ee content/eee
   runTest "Remove two files and generate backup with filelist and verify checksums" "" '
