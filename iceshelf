@@ -108,8 +108,11 @@ def checkNewVersion():
       p = Popen(['git', 'log', '--oneline', 'master..origin/master' ], stdout=PIPE, stderr=PIPE)
       out, err = p.communicate()
       if len(out) > 0:
-        logging.info("New version available")
-        logging.info("Changes: " + out)
+        logging.info("New version available:")
+        for line in out.split('\n'):
+          line = line.strip()
+          if line != "":
+            logging.info("+++ " + line)
   except:
     pass
 
