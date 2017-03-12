@@ -239,7 +239,7 @@ if hash gpg ; then
   if ! hasGPGconfig; then
     echo "Importing test-key for test usage"
     RESULT="$(gpg 2>&1 --fast-import test_key.*)"
-    RESULT2="$(echo "010034E91082BF022DBAF1FEA00E5EDACC9D1828:6:" | gpg --import-ownertrust)"
+    RESULT2="$(echo "010034E91082BF022DBAF1FEA00E5EDACC9D1828:6:" | gpg 2>&1 --import-ownertrust)"
     if [ $? -eq 0 ] ; then
       HASKEY=true
     else
