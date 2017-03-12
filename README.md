@@ -1,4 +1,4 @@
-# iceshelf
+# iceshelf [![Build Status](https://travis-ci.org/mrworf/iceshelf.svg?branch=master)](https://travis-ci.org/mrworf/iceshelf)
 
 A simple tool to allow storage of private, incremental backups using Amazon's Glacier storage. It uses par2, tar, bzip2, gpg, json and nice stuff like that to accomplish the job.
 
