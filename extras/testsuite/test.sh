@@ -105,6 +105,10 @@ function runTest() {
     fi
   fi
 
+  # Before we start, log folder structure
+  ls -laR content/ >/tmp/before_content.txt
+  ls -laR compare/content/ >/tmp/before_compare.txt
+
   RESULT="$(${ICESHELF} 2>&1 config_$4 ${@:6})"
   if [ $? -ne 0 ]; then
     echo "Test failed:"
@@ -182,10 +186,14 @@ function runTest() {
   if $FAILED ; then
     echo "=== FAILED! Diff is not matching expectations for ${ORIGINAL}:"
     echo "$DIFF"
-    echo "=== Contents of folder: content/"
+    echo "=== Contents of folder: content/ (now)"
     ls -laR content/
-    echo "=== Contents of folder: compare/content/"
+    echo "=== Contents of folder: content/ (before)"
+    cat /tmp/before_content.txt
+    echo "=== Contents of folder: compare/content/ (now)"
     ls -laR compare/content/
+    echo "=== Contents of folder: compare/content/ (before)"
+    cat /tmp/before_compare.txt
     exit 255
   fi
 
@@ -198,12 +206,12 @@ function runTest() {
     unset -f posttest
   fi
 
-#  if [ "Move file and copy the same as well" == "$1" ]; then
-#    return 0
-#  fi
+  if [ "Move file and copy the same as well" == "$1" ]; then
+    return 0
+  fi
 
   # Final step, sync content with compare
-  rsync -avr --delete content/ compare/content/ 2>&1 >/dev/null
+  rsync -avr --delete content/ compare/content/ 2>/dev/null >/dev/null
 }
 
 function hasGPGconfig() {
@@ -310,6 +318,8 @@ Only in content: dd"
   cp content/ee content/eee || echo "ERROR: copying content/ee to content/eee"
   runTest "Move file and copy the same as well" "" "" regular "Only in compare/content: e
 Only in content: ee"
+
+exit 0
 
   rm content/ee content/eee
   runTest "Remove two files and generate backup with filelist and verify checksums" "" '
