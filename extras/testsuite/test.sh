@@ -97,7 +97,7 @@ function runTest() {
   fi
 
   if [ "$2" == "" ]; then
-    RESULT="$(${ICESHELF} 2>&1 config_$4 --changes)"
+    RESULT="$(${ICESHELF} 2>&1 config_$4 --debug --changes)"
     if [ $? -ne 1 ]; then
       echo "Test failed: Didn't detect changes"
       echo "$RESULT"
@@ -105,7 +105,7 @@ function runTest() {
     fi
   fi
 
-  RESULT="$(${ICESHELF} 2>&1 config_$4 ${@:6})"
+  RESULT="$(${ICESHELF} 2>&1 config_$4 --debug ${@:6})"
   if [ $? -ne 0 ]; then
     echo "Test failed:"
     echo "$RESULT"
@@ -182,6 +182,8 @@ function runTest() {
   if $FAILED ; then
     echo "=== FAILED! Diff is not matching expectations for ${ORIGINAL}:"
     echo "$DIFF"
+    echo "=== Iceshelf output:"
+    echo "$RESULT"
     echo "=== Contents of folder: content/ (now)"
     ls -la content/
     echo "=== Contents of folder: content/ (before)"
