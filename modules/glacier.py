@@ -19,6 +19,10 @@ def uploadFiles(config, files, bytes):
   cmd = ["upload", config["glacier-vault"]]
   for f in files:
     cmd.append(os.path.join(config["prepdir"], f))
+    cmd.append('--description')
+    cmd.append(config["unique"])
+    cmd.append('--name')
+    cmd.append(f)
 
   upload_start = round(time.time())
   result = glacierCommand(config, cmd)
@@ -39,6 +43,9 @@ def glacierCommand(config, args):
 
   cmd = ["glacier-cmd", "-c", config["glacier-config"], "--output", "json"]
   cmd += args
+
+  logging.debug("Glacier command: " + repr(cmd))
+
   p = Popen(cmd, stdout=PIPE, stderr=PIPE)
   out, err = p.communicate()
   return {"code" : p.returncode, "output" : out, "error" : err }
