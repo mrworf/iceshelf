@@ -72,7 +72,6 @@ parser.add_argument('--show', metavar='ARCHIVE', help='Shows members of a certai
 parser.add_argument('--modified', action='store_true', default=False, help='Show all files which exists multiple times due to modifications')
 parser.add_argument('--full', action='store_true', default=False, help='Full backup, regardless of changes to files')
 parser.add_argument('--list', type=str.lower, choices=['files', 'members', 'sets'], help='List currently backed up structure')
-parser.add_argument('--no-update', action='store_true', default=False, help="Checks for updates to iceshelf if available")
 parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
 cmdline = parser.parse_args()
 
@@ -351,7 +350,7 @@ if config is None:
   sys.exit(1)
 
 # Check version
-if not cmdline.no_update:
+if config["checkupdate"]:
   checkNewVersion()
 
 # Also make sure any GnuPG key is available and valid

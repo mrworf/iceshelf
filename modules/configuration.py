@@ -33,6 +33,7 @@ setting = {
   "skip-empty": False,
   "encrypt-manifest" : True,
   "create-filelist" : True,
+  "checkupdate" : False,
 }
 
 def getVersion():
@@ -78,6 +79,7 @@ def parse(filename, onlysecurity=False):
   config.set("options", "change method", "sha1")
   config.set("options", "max keep", "0")
   config.set("options", "create filelist", "yes")
+  config.set("options", "check update", "no")
 
   config.add_section("glacier")
   config.set("glacier", "config", "")
@@ -135,6 +137,12 @@ def parse(filename, onlysecurity=False):
     return None
   elif config.get("options", "persuasive").lower() == "no":
     setting["persuasive"] = False
+
+  if config.get("options", "check update").lower() not in ["yes", "no"]:
+    logging.error("check update has to be yes/no")
+    return None
+  elif config.get("options", "check update").lower() == "yes":
+    setting["checkupdate"] = True
 
   if config.get("options", "ignore overlimit").lower() not in ["yes", "no"]:
     logging.error("ignore overlimit has to be yes/no")
@@ -214,7 +222,7 @@ def parse(filename, onlysecurity=False):
   elif config.getint("security", "add parity") > 0:
     setting["parity"] = config.getint("security", "add parity")
     if setting["maxsize"] > 34359738367 or setting["maxsize"] == 0:
-      logging.info("max size is limited to 32GB when using parity, changing \"max size\" setting")
+      logging.debug("max size is limited to 32GB when using parity, changing \"max size\" setting")
       setting["maxsize"] = 34359738367 # (actually 32GB - 1 byte)
 
   if config.get("paths", "create paths").lower() not in ["yes", "no"]:
