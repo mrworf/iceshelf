@@ -2,6 +2,7 @@ language: python
 install:
   - pip install -r requirements.txt
   - sudo apt-get install par2
+  - sudo apt-get install gnupg
   - git clone https://github.com/uskudnik/amazon-glacier-cmd-interface.git
   - cd amazon-glacier-cmd-interface && sudo python setup.py install && cd ..
 script: ./extras/testsuite/test.sh
