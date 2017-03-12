@@ -105,10 +105,6 @@ function runTest() {
     fi
   fi
 
-  # Before we start, log folder structure
-  ls -laR content/ >/tmp/before_content.txt
-  ls -laR compare/content/ >/tmp/before_compare.txt
-
   RESULT="$(${ICESHELF} 2>&1 config_$4 ${@:6})"
   if [ $? -ne 0 ]; then
     echo "Test failed:"
@@ -210,8 +206,14 @@ function runTest() {
     return 0
   fi
 
+  # Before we sync, log folder structure
+  ls -laR content/ >/tmp/before_content.txt
+  ls -laR compare/content/ >/tmp/before_compare.txt
+
   # Final step, sync content with compare
-  rsync -avr --delete content/ compare/content/ 2>/dev/null >/dev/null
+  #rsync -avr --delete content/ compare/content/ 2>/dev/null >/dev/null
+  rm -rf compare/content || exit 255
+  cp -dpr content compare/ || exit 255
 }
 
 function hasGPGconfig() {
