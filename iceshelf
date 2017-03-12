@@ -196,6 +196,7 @@ def gatherData():
         if k not in movedFiles:
           try:
             tar.add(k, recursive=False)
+            logging.debug('''File "%s" added''' % k);
           except IOError as e:
             if e.errno is 2:
               logging.warning("File \"%s\" was removed after initial scan", k)
@@ -492,6 +493,7 @@ if config["detect-move"]:
           # Moved! From k to f
           movedFiles[f] = k
           tmpRemove.append(k)
+          logging.debug('''File "%s" moved to "%s"''' % (k, f))
           break
   for k in tmpRemove:
     deletedFiles.pop(k, None)
@@ -594,6 +596,7 @@ restore the file. We also must wipe the checksum so a restored file gets backed
 up again.
 """
 for f in deletedFiles:
+  logging.debug('''File "%s" deleted''' % f)
   if "deleted" in oldFiles[f]:
     oldFiles[f]["deleted"].append(config["unique"])
   else:
