@@ -1,0 +1,3 @@
+  rm content/b
+  runTest "Delete one file" "" "" regular "Only in compare/content: b"
+

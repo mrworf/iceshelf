@@ -81,6 +81,7 @@ function lastArchive() {
 # Param 6+ sent verbaitum to iceshelf
 #
 function runTest() {
+  ERROR=true # Catch all
   let "COUNT+=1"
   printf "Test #%03d: %s\n" ${COUNT} "$1"
 
@@ -90,8 +91,8 @@ function runTest() {
   if [ "$(type -t pretest)" == "function" ]; then
     RESULT="$(pretest)"
     if [ $? -ne 0 ]; then
-      echo "Pretest failed: $RESULT"
-      exit 255
+      echo "=== Pretest failed: $RESULT"
+      return 255
     fi
     unset -f pretest
   fi
@@ -99,17 +100,17 @@ function runTest() {
   if [ "$2" == "" ]; then
     RESULT="$(${ICESHELF} 2>&1 config_$4 --debug --changes)"
     if [ $? -ne 1 ]; then
-      echo "Test failed: Didn't detect changes"
+      echo "=== Iceshelf didn't detect changes"
       echo "$RESULT"
-      exit 255
+      return 255
     fi
   fi
 
   RESULT="$(${ICESHELF} 2>&1 config_$4 --debug ${@:6})"
   if [ $? -ne 0 ]; then
-    echo "Test failed:"
+    echo "=== Iceshelf failed:"
     echo "$RESULT"
-    exit 255
+    return 255
   fi
 
   # The magic part, we unpack into compare so we can diff things...
@@ -123,7 +124,7 @@ function runTest() {
       par2repair "${ARCHIVE}" >/dev/null
       if [ $? -ne 0 ]; then
         echo "ERROR: Parity is corrupt or insufficient, unable to repair file ${ORIGINAL}"
-        exit 255
+        return 255
       fi
     fi
 
@@ -137,7 +138,7 @@ function runTest() {
     fi
     if [ $GPGERR -ne 0 ]; then
       echo "ERROR: GPG was unable to process ${ORIGINAL}"
-      exit 255
+      return 255
     fi
 
     if echo "$ARCHIVE" | grep -q gpg ; then
@@ -152,7 +153,7 @@ function runTest() {
 
     if [ $GPGERR -ne 0 ]; then
       echo "ERROR: GPG was unable to process ${ORIGINAL}"
-      exit 255
+      return 255
     fi
 
     if echo "$ARCHIVE" | grep -q bz2 ; then
@@ -163,7 +164,7 @@ function runTest() {
   fi
   if [ $? -ne 0 ]; then
     echo "Failed decompressing ${ARCHIVE} (${ORIGINAL})"
-    exit 255
+    return 255
   fi
 
   DIFF=$(diff -r content compare/content)
@@ -191,25 +192,32 @@ function runTest() {
     echo "=== Iceshelf output:"
     echo "$RESULT"
     echo "=== Contents of folder: content/"
-    ls -la content/
+    ls -laR content/
     echo "=== Contents of folder: compare/content/"
-    ls -la compare/content/
-    exit 255
+    ls -laR compare/content/
+    return 255
   fi
 
   if [ "$(type -t posttest)" == "function" ]; then
     RESULT="$(posttest)"
     if [ $? -ne 0 ]; then
-      echo "Posttest failed: $RESULT"
-      exit 255
+      echo "=== FAILED! Posttest failed:"
+      echo "$RESULT"
+      echo "=== Iceshelf output:"
+      echo "$RESULT"
+      echo "=== Contents of folder: content/"
+      ls -laR content/
+      echo "=== Contents of folder: compare/content/"
+      ls -laR compare/content/
+      return 255
     fi
     unset -f posttest
   fi
 
   # Final step, sync content with compare
-  #rsync -avr --delete content/ compare/content/ 2>/dev/null >/dev/null
-  rm -rf compare/content || exit 255
-  cp -dpr content compare/ || exit 255
+  rsync -avr --delete content/ compare/content/ 2>/dev/null >/dev/null
+  ERROR=false
+  return 0
 }
 
 function hasGPGconfig() {
@@ -226,17 +234,39 @@ else
 fi
 
 # See if user has installed the testkey
-if ! hasGPGconfig; then
-  echo 'Note! GPG configuration not detected.'
-  echo 'To enable GPG support testing, install GPG and create a key with "test@test.test", passphrase "test"'
-else
-  ADD=()
-  for I in "${VARIATIONS[@]}"; do
-    ADD+=("$I,encrypted" "$I,signed" "$I,encrypted,signed")
-  done
-  for I in "${ADD[@]}"; do
-    VARIATIONS+=($I)
-  done
+if hash gpg ; then
+  HASKEY=false
+  if ! hasGPGconfig; then
+    echo "Generating test@test.test GPG key for test usage"
+    echo "Key-Type: RSA
+Key-Length: 2048
+Key-Usage: encrypt sign
+Subkey-Type: RSA
+Subkey-Length: 2048
+Name-Real: Tester
+Name-Comment: Test key used by iceshelf's testsuite
+Name-Email: test@test.test
+Expire-Date: 0
+Passphrase: test
+%commit" | gpg 2>/dev/null >/dev/null --gen-key --batch
+    if [ $? -eq 0 ] ; then
+      HASKEY=true
+    else
+      echo "WARNING: Unable to generate GPG key for testing, encryption will not be tested"
+    fi
+  else
+    HASKEY=true
+  fi
+
+  if $HASKEY ; then
+    ADD=()
+    for I in "${VARIATIONS[@]}"; do
+      ADD+=("$I,encrypted" "$I,signed" "$I,encrypted,signed")
+    done
+    for I in "${ADD[@]}"; do
+      VARIATIONS+=($I)
+    done
+  fi
 fi
 
 if [ "$1" == "short" ]; then
@@ -245,19 +275,20 @@ if [ "$1" == "short" ]; then
 fi
 
 # Runs through ALL the versions...
-for V in "${VARIATIONS[@]}"; do
+ERROR=false
+for VARIANT in "${VARIATIONS[@]}"; do
   EXTRAS="[security]"
-  if [[ "$V" == *"encrypted"* ]]; then
+  if [[ "$VARIANT" == *"encrypted"* ]]; then
     EXTRAS="$EXTRAS\nencrypt: test@test.test\nencrypt phrase: test\n"
   fi
-  if [[ "$V" == *"signed"* ]]; then
+  if [[ "$VARIANT" == *"signed"* ]]; then
     EXTRAS="$EXTRAS\nsign: test@test.test\nsign phrase: test\n"
   fi
-  if [[ "$V" == *"parity"* ]]; then
+  if [[ "$VARIANT" == *"parity"* ]]; then
     EXTRAS="$EXTRAS\nadd parity: 5\n"
   fi
 
-  echo "...Running suite using variation $V..."
+  echo "...Running suite using variation ${VARIANT}..."
 
   initialize
   generateConfig regular "$EXTRAS"
@@ -265,88 +296,31 @@ for V in "${VARIATIONS[@]}"; do
   generateConfig filelist "[options]\ncreate filelist: yes\n$EXTRAS"
   generateConfig encryptmani "[security]\nencrypt manifest: yes\n$EXTRAS"
 
-  runTest "Initial backup" "" "" regular
+  # First, make sure NO test uses the same case-number, that's an AUTO FAIL!
+  ALL_CASES="$(ls -1 tests/ | wc --lines)"
+  UNI_CASES="$(ls -1 tests/ | cut -c 1-3 | wc --lines)"
+  if [ "${ALL_CASES}" != "${UNI_CASES}" ]; then
+    echo "=== ERROR: Cannot have two cases with the same sequential number!"
+    ls -la tests/
+    exit 255
+  fi
 
-  dd if=/dev/urandom of=content/a bs=1024 count=123 2>/dev/null
-  runTest "Change one file" "" "" regular
-
-  rm content/b
-  runTest "Delete one file" "" "" regular "Only in compare/content: b"
-
-  runTest "Run without any changes" \
-    "skip" \
-    '
-  function pretest() {
-    if ! ${ICESHELF} --changes config_regular; then
-      echo "ERROR: Changes detected when there should not be any"
-      exit 255
+  while read TESTCASE; do
+    source "tests/$TESTCASE"
+    if $ERROR ; then
+      break
     fi
-  }
-    ' \
-    regular ""
-
-  rm content/c
-  dd if=/dev/urandom of=content/a bs=1024 count=123 2>/dev/null
-  runTest "Delete one file and change another" "" "" regular "Only in compare/content: c"
-
-  dd if=/dev/urandom of=content/b bs=1024 count=243 2>/dev/null
-  runTest "Create new file with same name as deleted file" "" "" regular
-
-  rm content/b
-  runTest "Delete the new file again" "" "" regular "Only in compare/content: b"
-
-  runTest "Test prefix config" \
-    "skip" \
-    '
-  function posttest() {
-    ls -laR done/ | grep prefix > /dev/null
-    if [ $? -ne 0 ]; then
-      echo "Prefix not working"
-      return 1
-    fi
-  }
-    ' \
-    prefix "" --full
-
-  mv content/d content/dd
-  runTest "Moved file" "" "" regular "Only in compare/content: d
-Only in content: dd"
-
-  ### This has has a latent issue, iceshelf doesn't do deduplication which means
-  ### that sometimes it catches the eee as a rename instead of ee.
-  ### To solve this, we use regex to allow for both cases
-
-  mv content/e content/ee || echo "ERROR: moving content/e to content/ee"
-  cp content/ee content/eee || echo "ERROR: copying content/ee to content/eee"
-  runTest "Move file and copy the same as well" "" "" regular '^Only in compare/content: e
-Only in content: eee?$'
-
-  rm content/ee content/eee
-  runTest "Remove two files and generate backup with filelist and verify checksums" "" '
-  function posttest() {
-    pushd $(lastFolder)
-    if ! shasum -c *.lst ; then
-      echo "filelist.txt checksum failed"
-      return 1
-    fi
-    popd
-  }
-  ' filelist "Only in compare/content: ee
-Only in compare/content: eee"
-
-  if [[ "$V" == *"encrypted"* ]]; then
-    cp content/q content/qq
-    runTest "Copy file and use encrypted manifest" "" '
-    function posttest() {
-      if ! ls -1 $(lastFolder) | grep json.gpg ; then
-        echo "No encrypted json was found"
-        return 1
-      fi
-    }
-    ' encryptmani ""
+  done  < <(ls -1 tests/)
+  if $ERROR ; then
+    break
   fi
 done
 
-echo -e "\nAll tests ended successfully"
-cleanup
-exit 0
+if $ERROR ; then
+  echo -e "\nTest failed, output directories preserved for analysis"
+  exit 255
+else
+  echo -e "\nAll tests ended successfully"
+  cleanup
+  exit 0
+fi

@@ -1,0 +1,13 @@
+  rm content/ee content/eee
+  runTest "Remove two files and generate backup with filelist and verify checksums" "" '
+  function posttest() {
+    pushd $(lastFolder)
+    if ! shasum -c *.lst ; then
+      echo "filelist.txt checksum failed"
+      return 1
+    fi
+    popd
+  }
+  ' filelist "Only in compare/content: ee
+Only in compare/content: eee"
+

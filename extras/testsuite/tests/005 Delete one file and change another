@@ -1,0 +1,4 @@
+  rm content/c
+  dd if=/dev/urandom of=content/a bs=1024 count=123 2>/dev/null
+  runTest "Delete one file and change another" "" "" regular "Only in compare/content: c"
+

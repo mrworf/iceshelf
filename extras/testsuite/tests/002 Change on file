@@ -1,0 +1,4 @@
+# Change a file
+
+dd if=/dev/urandom of=content/a bs=1024 count=123 2>/dev/null
+runTest "Change one file" "" "" regular

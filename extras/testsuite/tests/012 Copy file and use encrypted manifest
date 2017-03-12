@@ -1,0 +1,11 @@
+if [[ "$VARIANT" == *"encrypted"* ]]; then
+  cp content/q content/qq
+  runTest "Copy file and use encrypted manifest" "" '
+  function posttest() {
+    if ! ls -1 $(lastFolder) | grep json.gpg ; then
+      echo "No encrypted json was found"
+      return 1
+    fi
+  }
+  ' encryptmani ""
+fi

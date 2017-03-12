@@ -1,0 +1,4 @@
+  mv content/d content/dd
+  runTest "Moved file" "" "" regular "Only in compare/content: d
+Only in content: dd"
+

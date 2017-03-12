@@ -1,0 +1,12 @@
+  runTest "Run without any changes" \
+    "skip" \
+    '
+  function pretest() {
+    if ! ${ICESHELF} --changes config_regular; then
+      echo "ERROR: Changes detected when there should not be any"
+      return 255
+    fi
+  }
+    ' \
+    regular ""
+

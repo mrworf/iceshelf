@@ -1,0 +1,13 @@
+  runTest "Test prefix config" \
+    "skip" \
+    '
+  function posttest() {
+    ls -laR done/ | grep prefix > /dev/null
+    if [ $? -ne 0 ]; then
+      echo "Prefix not working"
+      return 1
+    fi
+  }
+    ' \
+    prefix "" --full
+

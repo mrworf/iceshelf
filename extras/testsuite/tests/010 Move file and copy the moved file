@@ -1,0 +1,9 @@
+### This has has a latent issue, iceshelf doesn't do deduplication which means
+### that sometimes it catches the eee as a rename instead of ee.
+### To solve this, we use regex to allow for both cases
+
+mv content/e content/ee || echo "ERROR: moving content/e to content/ee"
+cp content/ee content/eee || echo "ERROR: copying content/ee to content/eee"
+runTest "Move file and copy the same as well" "" "" regular '^Only in compare/content: e
+Only in content: eee?$'
+
