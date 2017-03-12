@@ -238,6 +238,12 @@ if hash gpg ; then
   HASKEY=false
   if ! hasGPGconfig; then
     echo "Generating test@test.test GPG key for test usage"
+
+    if [ "$1" == "insecure" ] ; then
+      echo "Temporarily disabling good random (intended for travis usage)"
+      rngd -v -r /dev/urandom
+    fi
+
     echo "Key-Type: RSA
 Key-Length: 2048
 Key-Usage: encrypt sign
@@ -271,7 +277,7 @@ fi
 
 if [ "$1" == "short" ]; then
   echo "Running normal use-case only! NOT A COMPLETE TEST RUN!"
-  VARIATIONS=("encrypted")
+  VARIATIONS=("normal")
 fi
 
 # Runs through ALL the versions...
