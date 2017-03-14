@@ -29,7 +29,7 @@ me, finding cool names (phun intended) for projects is not always easy*
 
 1. Loads backup database if available
 2. Empties prep directory of any files
-3. Creates a tar file (recreating directory structure) until no more are found or limit is hit. If this wasn't the first run, only new or changed files are copied
+3. Creates a tar file (recreating directory structure) until no more are found or limit is hit. If this wasn't the first run, only new or changed files are added
 4. Depending on options, tar file is compressed with bzip2
 5. The archive is encrypted with a public key of your choice
 6. The archive is signed with a public key of your choice (not necessarily the same as in #6)
@@ -37,8 +37,8 @@ me, finding cool names (phun intended) for projects is not always easy*
 8. The manifest is signed (using ASCII instead of binary to keep it readable)
 9. Parity file(s) are created to allow the archive to be restored should bitrot happen
 10. All parity files are signed
-11. Resulting files are uploaded to the cloud (may take a while with AWS Glacier)
-12. Backup is copied to safe keeping
+11. Resulting files are uploaded to the cloud (may take a while with AWS Glacier, skipped if no cloud config))
+12. Backup is copied to safe keeping (if done directory is specified)
 13. Prep directory is emptied
 14. New backup is added to local database
 15. Local database is saved as JSON
@@ -145,6 +145,12 @@ By default, iceshelf does not create the done, data or preparation directories, 
 ### Section [options]
 
 There are quite a few options for you to play with. Unless otherwise specified, the options are toggled using `yes` or `no`.
+
+#### check update
+
+Will try to detect if there is a new version of iceshelf available and if so, print out the changes. It's done as the first operation before starting the backup. It requires you run iceshelf from its git repository and that `git` is available. If there is no new version or it's not run from the git repository, then it fails silently.
+
+*default is no, don't check for updates*
 
 #### max size
 

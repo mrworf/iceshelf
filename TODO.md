@@ -4,17 +4,14 @@ This file details what my goals are for this project, both in the short term and
 
 The list is intentionally kept vague to avoid over-promising and under-delivering :)
 
-## Critical fixes
-- Detect wrong version of gnupg
-- Detect missing key or wrong passphrase
-- Improve testsuite to cover permutations of: encrypt, sign, parity
-
 ## Short term
+- Add indicator to hash field, so we know what version was used, to allow migration from one hash method to the next. Why? See next item
+- SHA1 needs to go, but changing the default breaks existing backups. Solution? See above :)
 - Add support for embedding manifest inside backup instead of separately
-- Add support for encrypting manifest outside backup instead of plain text
-- Add support for restoring backups
+- Extend iceshelf to allow usage of alternate long-term storage solutions other than glacier
 
 ## Long term
+- Add testsuite coverage of iceshelf-restore
 - Detect duplication when using sha method (impossible with meta due to lack of details)
 - Move validation of exclusion rules to configuration parsing instead of during backup
 
@@ -25,6 +22,7 @@ The list is intentionally kept vague to avoid over-promising and under-deliverin
 - add warning if one and the same file changes a lot
 - Add piece about "why encrypt" to README.md (ie, why I am so adamant about it). See second section in this file for current links about security until I get around to putting it in the README.md
 - Redo the "?bla" rule into a "*bla*" which makes more sense... But do we also need to support *bl*a* then? Probably
+- Detect missing key or wrong passphrase
 
 # Why use iceshelf with encryption?
 
