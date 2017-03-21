@@ -1,0 +1,8 @@
+# This strips all hash identifiers from the database and then runs
+# a changes test. It should not detect any changes.
+
+# Strip sha indicator from database
+cat data/checksum.json | sed -r 's/:sha[0-9]+//g' > data/checksum.json.tmp
+mv data/checksum.json.tmp data/checksum.json
+
+runTest "Handle legacy file" "nochange" '' regular

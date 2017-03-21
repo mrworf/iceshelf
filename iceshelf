@@ -138,7 +138,7 @@ def collectFile(filename):
   if maxsize > 0 and (currentOp["filesize"] + info.st_size) > maxsize and not cmdline.changes:
     return False
 
-  chksum = fileutils.hashFile(filename, config["sha-type"])
+  chksum = fileutils.hashFile(filename, config["sha-type"], True)
 
   # Remove files from the deleted index (so we catch files which are deleted, they are the ones left behind)
   deletedFiles.pop(filename, None)
@@ -150,7 +150,7 @@ def collectFile(filename):
     item.append(filename)
 
   item = oldFiles.get(filename)
-  if item is None or item["checksum"] != chksum or cmdline.full:
+  if item is None or fileutils.hashChanged(filename, item["checksum"], chksum) or cmdline.full:
     currentOp["filecount"] += 1
     currentOp["filesize"] += info.st_size
     if willCompress(filename):

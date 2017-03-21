@@ -54,12 +54,45 @@ def repairParity(filename):
       os.unlink(filename + '.1')
   return p.returncode == 0
 
-def hashFile(file, shatype):
+def hashFile(file, shatype, includeType=False):
   sha = hashlib.new(shatype)
   with open(file, 'rb') as fp:
     for chunk in iter(lambda: fp.read(32768), b''):
       sha.update(chunk)
+  if includeType:
+    return sha.hexdigest() + ":" + shatype
   return sha.hexdigest()
+
+def hashChanged(filename, oldChecksum, newChecksum):
+  (hashNew, typeNew) = newChecksum.split(':', 2)
+
+  # See if it's using the new method of hashes
+  if ':' in oldChecksum:
+    (hashOld, typeOld) = oldChecksum.split(':', 2)
+    if typeOld != typeNew:
+      hashNew = hashFile(filename, typeOld)
+    return hashOld != hashNew
+
+  # It's the old kind, see if this matches
+  if len(oldChecksum) != len(hashNew):
+    l = len(oldChecksum)
+    hashNew = None # Forces a differences if we can't resolve
+    if l == 32:
+      hashNew = hashFile(filename, "md5")
+    elif l == 40:
+      hashNew = hashFile(filename, "sha1")
+    elif l == 56:
+      hashNew = hashFile(filename, "sha224")
+    elif l == 64:
+      hashNew = hashFile(filename, "sha256")
+    elif l == 96:
+      hashNew = hashFile(filename, "sha384")
+    elif l == 128:
+      hashNew = hashFile(filename, "sha512")
+    else:
+      logging.warn("Unable to determine hashing method used, returning changed")
+
+  return oldChecksum != hashNew
 
 def sumSize(path, files):
   result = 0

@@ -1,0 +1,29 @@
+# Add a new file, change an old file
+# Run the backup using sha256 instead of sha1 and make sure these
+# files now have a sha256 entry.
+
+# Generate a 10k file that doesn't exist
+dd 2>/dev/null if=/dev/urandom of=content/qqq bs=1024 count=10
+# Get the hash of that
+NEW="$(sha256sum content/qqq | cut -d " " -f 1):sha256"
+
+# Generate a 10k file that does exist
+dd 2>/dev/null if=/dev/urandom of=content/q bs=1024 count=10
+OLD="$(sha256sum content/q | cut -d " " -f 1):sha256"
+
+runTest "Test change of hash config" "" \
+  '
+function posttest() {
+  grep "$NEW" data/checksum.json
+  if [ $? -ne 0 ]; then
+    echo "Hash did not change for content/qqq"
+    return 1
+  fi
+  grep "$OLD" data/checksum.json
+  if [ $? -ne 0 ]; then
+    echo "Hash did not change for content/q"
+    return 1
+  fi
+}
+  ' \
+  changehash

@@ -170,7 +170,7 @@ This behavior is to allow you to segment your uploads into a specific size.**
 
 How to detect changes. You have a few different modes, the most common is `data`, but also `sha1` (same as data actually), `sha256` and `sha512` works. Iceshelf uses hashes of the data which is then compared to see changes. While sha1 usually is good enough, you can also specify `sha256` or `sha512` if you feel it is warranted.
 
-Note that switching between various methods will cause the next backup to be a full backup since the checksums will not match.
+Note that switching between various methods will not upgrade all checksum on the next run, only files which have changes will get the new checksum to avoid unnecessary changes.
 
 *default is `data`*
 

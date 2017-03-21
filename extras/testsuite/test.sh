@@ -48,7 +48,6 @@ data dir: data/
 done dir: done/
 [options]
 max size:
-change method: data
 delta manifest: yes
 compress: no
 persuasive: yes
@@ -74,7 +73,7 @@ function lastArchive() {
 # If no changes are found, it fails
 #
 # Param 1: Name of the test
-# Param 2: Run --changes ? If non-empty, it's skipped
+# Param 2: Run --changes ? skip = no, nochange = expect no changes, change = expect changes
 # Param 3: Optional script (pretest() and posttest())
 # Param 4: Configfile to use
 # Param 5: List of file remaining in compare
@@ -97,19 +96,30 @@ function runTest() {
     unset -f pretest
   fi
 
-  if [ "$2" == "" ]; then
-    RESULT="$(${ICESHELF} 2>&1 config_$4 --debug --changes)"
-    if [ $? -ne 1 ]; then
-      echo "=== Iceshelf didn't detect changes"
-      echo "$RESULT"
+  if [ ! -f config_$4 ]; then
+    echo "=== Config \"config_$4\" does not exist"
+    return 255
+  fi
+
+  if [ "$2" != "skip" ]; then
+    RESULT1="$(${ICESHELF} 2>&1 config_$4 --debug --changes)"
+    RET=$?
+    if [ $RET -ne 1 -a "$2" == "change" ]; then
+      echo "=== Iceshelf didn't detect changes (was expected to detect changed)"
+      echo "$RESULT1"
+      return 255
+    fi
+    if [ $RET -ne 0 -a "$2" == "nochange" ]; then
+      echo "=== Iceshelf detected changes (was expected to not have changes)"
+      echo "$RESULT1"
       return 255
     fi
   fi
 
-  RESULT="$(${ICESHELF} 2>&1 config_$4 --debug ${@:6})"
+  RESULT2="$(${ICESHELF} 2>&1 config_$4 --debug ${@:6})"
   if [ $? -ne 0 ]; then
     echo "=== Iceshelf failed:"
-    echo "$RESULT"
+    echo "$RESULT2"
     return 255
   fi
 
@@ -190,7 +200,7 @@ function runTest() {
     echo "=== Expected:"
     echo "'$5'"
     echo "=== Iceshelf output:"
-    echo "$RESULT"
+    echo "$RESULT2"
     echo "=== Contents of folder: content/"
     ls -laR content/
     echo "=== Contents of folder: compare/content/"
@@ -204,7 +214,7 @@ function runTest() {
       echo "=== FAILED! Posttest failed:"
       echo "$RESULT"
       echo "=== Iceshelf output:"
-      echo "$RESULT"
+      echo "$RESULT2"
       echo "=== Contents of folder: content/"
       ls -laR content/
       echo "=== Contents of folder: compare/content/"
@@ -288,6 +298,7 @@ for VARIANT in "${VARIATIONS[@]}"; do
   generateConfig prefix "[options]\nprefix: prefixed-\n$EXTRAS"
   generateConfig filelist "[options]\ncreate filelist: yes\n$EXTRAS"
   generateConfig encryptmani "[security]\nencrypt manifest: yes\n$EXTRAS"
+  generateConfig changehash "[options]\nchange method: sha256\n$EXTRAS"
 
   # First, make sure NO test uses the same case-number, that's an AUTO FAIL!
   ALL_CASES="$(ls -1 tests/ | wc --lines)"
