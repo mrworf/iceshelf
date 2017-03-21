@@ -68,7 +68,6 @@ def parse(filename, onlysecurity=False):
 
   config.add_section("options")
   config.set("options", "max size", "0")
-  config.set("options", "change method", "meta")
   config.set("options", "delta manifest", "yes")
   config.set("options", "compress", "yes")
   config.set("options", "incompressible", "")
@@ -171,7 +170,9 @@ def parse(filename, onlysecurity=False):
     setting["use-sha"] = True
     setting["sha-type"] = config.get("options", "change method").lower()
     if setting["sha-type"] == "data":
+      logging.debug("Sha type was data, default to sha1")
       setting["sha-type"] = "sha1"
+    logging.debug("Using sha-type: " + setting["sha-type"])
 
   if config.get("options", "incompressible"):
     setting["extra-ext"] = config.get("options", "incompressible").split()
