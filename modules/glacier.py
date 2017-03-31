@@ -16,9 +16,9 @@ def createVault(config):
 
 def uploadFiles(config, files, bytes):
   logging.info("Uploading %d files (%s) to glacier, this may take a while", len(files), helper.formatSize(bytes))
-  cmd = ["upload", '--description', config["unique"], config["glacier-vault"]]
+  cmd = ["upload", config["glacier-vault"]]
   for f in files:
-    cmd.append(os.path.join(config["prepdir"], f))
+    cmd.append(f)
 
   upload_start = round(time.time())
   result = glacierCommand(config, cmd)
@@ -42,7 +42,7 @@ def glacierCommand(config, args):
 
   logging.debug("Glacier command: " + repr(cmd))
 
-  p = Popen(cmd, stdout=PIPE, stderr=PIPE)
+  p = Popen(cmd, stdout=PIPE, stderr=PIPE, cwd=config["prepdir"])
   out, err = p.communicate()
   return {"code" : p.returncode, "output" : out, "error" : err }
 """
