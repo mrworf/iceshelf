@@ -90,7 +90,7 @@ def hashChanged(filename, oldChecksum, newChecksum):
     elif l == 128:
       hashNew = hashFile(filename, "sha512")
     else:
-      logging.warn("Unable to determine hashing method used, returning changed")
+      logging.warn("Unable to determine hashing method used, returning changed (old hash: " + oldChecksum + ")")
 
   return oldChecksum != hashNew
 
