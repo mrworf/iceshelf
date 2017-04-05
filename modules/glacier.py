@@ -44,7 +44,10 @@ def glacierCommand(config, args):
 
   p = Popen(cmd, stdout=PIPE, stderr=PIPE, cwd=config["prepdir"])
   out, err = p.communicate()
+  logging.debug("Output: " + repr(out))
+  logging.debug("Error : " + repr(err))
   return {"code" : p.returncode, "output" : out, "error" : err }
+#  return {"code": 0}
 """
 upload:
 {'output': '{"Created archive with ID": "", "Archive SHA256 tree hash": "", "Uploaded file": ""}\n', 'code': 0, 'error': ''}
