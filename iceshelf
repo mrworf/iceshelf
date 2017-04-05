@@ -150,7 +150,7 @@ def collectFile(filename):
     item.append(filename)
 
   item = oldFiles.get(filename)
-  if item is None or fileutils.hashChanged(filename, item["checksum"], chksum) or cmdline.full:
+  if item is None or item["checksum"] == '' or fileutils.hashChanged(filename, item["checksum"], chksum) or cmdline.full:
     currentOp["filecount"] += 1
     currentOp["filesize"] += info.st_size
     if willCompress(filename):
