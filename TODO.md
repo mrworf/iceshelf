@@ -5,10 +5,8 @@ This file details what my goals are for this project, both in the short term and
 The list is intentionally kept vague to avoid over-promising and under-delivering :)
 
 ## Short term
-- Add indicator to hash field, so we know what version was used, to allow migration from one hash method to the next. Why? See next item
-- SHA1 needs to go, but changing the default breaks existing backups. Solution? See above :)
-- Add support for embedding manifest inside backup instead of separately
 - Extend iceshelf to allow usage of alternate long-term storage solutions other than glacier
+- add hint if a backup is full instead of incremential
 
 ## Long term
 - Add testsuite coverage of iceshelf-restore
