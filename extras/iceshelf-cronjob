@@ -3,14 +3,14 @@
 #
 SHOWSUCCESS=true
 USER=iceshelf
-CONF=/home/${USER}/iceshelf.conf
-EXEC=/home/${USER}/iceshelf/iceshelf
+CONF=/home/${USER}/backup.conf
+EXEC=/home/${USER}/iceshelf
 
 # Allow you to override the defaults above without having to
 # edit this file.
 #
-if [ -f "/etc/defaults/iceshelf" ]; then
-	source "/etc/defaults/iceshelf"
+if [ -f "/etc/default/iceshelf" ]; then
+	source "/etc/default/iceshelf"
 fi
 
 ############# DO NOT CHANGE ANYTHING BELOW THIS POINT #####################

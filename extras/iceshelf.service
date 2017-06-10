@@ -5,12 +5,12 @@ After=network.target
 
 [Service]
 # Configure your user here
-User=ice
-Group=ice
+User=iceshelf
+Group=iceshelf
 
 # Configure paths to iceshelf and config here
-Environment="ICESHELF=/home/ice/src/iceshelf"
-Environment="CONFIG=/home/ice/iceshelf.conf"
+Environment="ICESHELF=/home/iceshelf/iceshelf"
+Environment="CONFIG=/home/iceshelf/backup.conf"
 
 Type=simple
 ExecStart=/usr/bin/python ${ICESHELF} ${CONFIG}
@@ -27,8 +27,8 @@ ProtectSystem=full
 
 # Everything is read-only by default
 ReadOnlyDirectories=/
-# Allow writing to these directories:        (GnuPG needs to lock its keyrings, add tmp dir and data dir)
-ReadWriteDirectories=/home/ice/.gnupg /home/ice/tmpdir /home/ice/datadir
+# Allow writing to these directories:        (GnuPG needs to lock its keyrings, add tmp dir, done dir and data dir)
+ReadWriteDirectories=/home/iceshelf/.gnupg /home/iceshelf/backup/inprogress /home/iceshelf/backup/metadata /home/iceshelf/backup/done
 # Don't allow access to these directories:   (GnuPG needs /dev)
 InaccessibleDirectories=-/root -/opt -/run -/sbin
 
