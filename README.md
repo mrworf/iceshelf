@@ -405,6 +405,10 @@ There is as of yet no way to have iceshelf retreive the backup it created and up
 
 # FAQ
 
+## I keep getting "Signature not yet current" errors when uploading
+
+This is caused by your system clock being off by more than 5 minutes. It's highly recommended that you run a time synchronization daemon such as NTPd on the machine which is responsible for uploading the backup to glacier.
+
 ## When I run the tool, it says "Current GnuPG python module does not support file encryption, please check FAQ section in documentation"
 
 Unfortunately, there is both a gnupg and a python-gnupg implementation. This tool relies on the latter. If you get this error, then you've installed the `gnupg` version instead of `python-gnupg`.
