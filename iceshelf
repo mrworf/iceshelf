@@ -42,6 +42,7 @@ import modules.configuration as configuration
 import modules.fileutils as fileutils
 import modules.helper as helper
 import modules.glacier as glacier
+import modules.aws as aws
 
 lastBackup = None
 oldMoves = {}
@@ -96,6 +97,15 @@ if not "encrypt_file" in dir(gnupg.GPG()):
   sys.exit(255)
 
 #######################
+
+def executeCommand(config, cmd):
+  logging.debug("Executing command: " + repr(cmd))
+
+  p = Popen(cmd, stdout=PIPE, stderr=PIPE, cwd=config["prepdir"])
+  out, err = p.communicate()
+  logging.debug("Output: " + repr(out))
+  logging.debug("Error : " + repr(err))
+  return p.returncode
 
 def checkNewVersion():
   # First, see if there's a .git folder where we stand
@@ -582,13 +592,13 @@ logging.info(msg)
 # We want to avoid wasting requests, so only try to
 # create vaults if we need to.
 backup = False
-if config["glacier-config"] is not None:
+if config["glacier-vault"] is not None:
   if config["glacier-vault"] != oldVault:
     logging.info("Glacier vault most likely not in cloud, let's create it")
-    if glacier.createVault(config):
-      backup = glacier.uploadFiles(config, files, totalbytes)
+    if aws.createVault(config):
+      backup = aws.uploadFiles(config, files, totalbytes)
   else:
-    backup = glacier.uploadFiles(config, files, totalbytes)
+    backup = aws.uploadFiles(config, files, totalbytes)
 else:
   logging.info("Not uploading to Glacier since config is missing")
   backup = True

@@ -66,8 +66,7 @@ In order to be able to run this, you need a few other parts installed.
 - python-gnupg - Encryption & Signature (NOT `gnupg`, it's `python-gnupg`)
   Ubuntu comes with a version, but unfortunately it's too old. You should install this using the `pip` tool to make sure you get a current version.
 - par2 - Parity tool
-- glacier-cmd - The tool which interacts with Glacier
-  This must be downloaded and installed manually, see https://github.com/uskudnik/amazon-glacier-cmd-interface
+- aws - In order to upload archive to glacier (see 
 
 ### Installing on Ubuntu
 
@@ -89,10 +88,7 @@ This is the simple version which points out what commands to run. Please conside
 
 4. Glacier
   ```
-  cd
-  git clone https://github.com/uskudnik/amazon-glacier-cmd-interface.git
-  cd amazon-glacier-cmd-interface/
-  sudo python setup.py install
+  sudo apt install awscli
   ```
 
 ## Configuration file
@@ -307,13 +303,11 @@ This is, believe it or not, optional. Yes, you can run iceshelf locally and have
 
 You can of course use both the glacier options and `done dir` if you prefer a local copy of any AWS Glacier copy.
 
-#### config
-
-The configuration file for glacier-cmd, without this, it will not work. Even if you have defined the default config which glacier-cmd automatically uses, you still need to define it here or iceshelf will complain.
-
 #### vault
 
 The name of the vault. Iceshelf will automatically create the vault if it doesn't exist, it will also avoid doing so to minimize the operations towards the AWS to avoid extra fees. It does this by only creating/checking the existance of the vault when you run iceshelf the first time or when you change the vault name from its previous name.
+
+NOTE! You will need to run ```aws configure``` for the user which will be running iceshelf in order to set up the aws tool.
 
 ### Section [security]
 
