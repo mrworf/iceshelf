@@ -292,7 +292,9 @@ def gatherData():
 
   # Add parity if requested
   if havearchive:
-    if config["parity"] > 0 and not fileutils.generateParity(file_archive, config["parity"]):
+    if config["parity"] > 0:
+      logging.info("Generating %d%% parity information", config['parity'])
+      if not fileutils.generateParity(file_archive, config["parity"]):
         logging.error("Unable to create PAR2 file for this archive")
         return None
 
