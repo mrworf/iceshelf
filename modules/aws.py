@@ -95,7 +95,7 @@ def hashFile(file):
       return output[0]
   return {'blocks' : blocks, 'final' : recurse(blocks or [h(b"")])}
 
-def uploadFile(config, file, tmpfile, withPath=False):
+def uploadFile(config, prefix, file, tmpfile, withPath=False):
   hashes = hashFile(file)
   if hashes is None:
     logging.error('File %s does not exist', file)
@@ -121,7 +121,7 @@ def uploadFile(config, file, tmpfile, withPath=False):
 
   # Chunk upload, 1MB chunks
   if sys.stdout.isatty():
-    sys.stdout.write('\r%s, %.2f%% done' % (name, 0))
+    sys.stdout.write('\r%s%s, %.2f%% done' % (prefix, name, 0))
     sys.stdout.flush()
   while remain > 0:
     chunk = remain
@@ -155,7 +155,7 @@ def uploadFile(config, file, tmpfile, withPath=False):
     remain -= chunk
     offset += chunk
     if sys.stdout.isatty():
-      sys.stdout.write('\r%s, %.2f%% done' % (name, float(offset)/float(size) * 100.0))
+      sys.stdout.write('\r%s%s, %.2f%% done' % (prefix, name, float(offset)/float(size) * 100.0))
       sys.stdout.flush()
 
   if sys.stdout.isatty():
@@ -180,10 +180,14 @@ def uploadFiles(config, files, bytes):
   tmp = tf.name
   tf.close()
 
+  i = 0
+  d = 0
   for file in files:
+    i += 1
     file = os.path.join(config["prepdir"], file)
-    if not uploadFile(config, file, tmp):
+    if not uploadFile(config, "(%d of %d, %.2f%%) " % (i, len(files), float(d)/float(bytes) * 100), file, tmp):
       return False
+    d += os.path.getsize(file)
   os.unlink(tmp)
   return True
 
