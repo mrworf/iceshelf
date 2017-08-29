@@ -3,7 +3,7 @@
   function posttest() {
     pushd $(lastFolder)
     # Make sure we don't get tripped by signed version of file list
-    gpg -o filelist.lst -d *.lst.asc 2>/dev/null && rm *.lst.asc
+    gpg -o filelist.lst -d *.lst.asc 2\>/dev/null && rm *.lst.asc
     if ! shasum -c *.lst ; then
       echo "file list checksum failed"
       return 1
