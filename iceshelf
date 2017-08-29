@@ -354,7 +354,25 @@ def gatherData():
           # Remove old content
           os.remove(f)
   if config["create-filelist"]:
-    fileutils.generateFilelist(config["prepdir"], os.path.join(config["prepdir"], config["prefix"] + config["unique"]) + ".lst")
+    file_list = os.path.join(config["prepdir"], config["prefix"] + config["unique"]) + ".lst"
+    fileutils.generateFilelist(config["prepdir"], file_list)
+    if config["sign"]:
+      logging.info("Signing filelist")
+      with open(file_list, 'rb') as fp:
+        gpg.sign_file(
+          fp,
+          keyid=config["sign"],
+          passphrase=config["sign-pw"],
+          clearsign=False,
+          output=file_list+".asc"
+        )
+      if not os.path.exists(file_list + ".asc"):
+        logging.error("GnuPG didn't produce a signed file. Please make sure GnuPG is installed and running properly")
+        return None
+      # Remove old content
+      os.remove(file_list)
+      file_list += ".asc"
+
   return os.listdir(config["prepdir"])
 
 #####################
