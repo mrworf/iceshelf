@@ -2,12 +2,12 @@
   runTest "Remove two files and generate backup with filelist and verify checksums" "" '
   function posttest() {
     pushd $(lastFolder)
+    gpg -o filelist.lst -d *.lst.asc && rm *.lst.asc
     if ! shasum -c *.lst ; then
-      echo "filelist.txt checksum failed"
+      echo "file list checksum failed"
       return 1
     fi
     popd
   }
   ' filelist "Only in compare/content: ee
 Only in compare/content: eee"
-
