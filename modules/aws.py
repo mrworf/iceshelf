@@ -121,7 +121,7 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
 
   # Chunk upload, 1MB chunks
   if sys.stdout.isatty():
-    sys.stdout.write('\r%s%s, %.2f%% done' % (prefix, name, 0))
+    sys.stdout.write('%s%s, %.2f%% done\r' % (prefix, name, 0))
     sys.stdout.flush()
   while remain > 0:
     chunk = remain
@@ -139,14 +139,14 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
       result = awsCommand(config, ['upload-multipart-part', '--vault-name', config['glacier-vault'], '--upload-id', uploadId, '--body', tmpfile, '--range', dataRange])
       if result is not None and result['json'] is not None and 'checksum' in result['json']:
         if hashes['blocks'][block].hexdigest() != result['json']['checksum']:
-          logging.error('Hash does not match, expected %s got %s. Retry', hashes['blocks'][block].hexdigest(), result['json']['checksum'])
+          logging.error('Hash does not match, expected %s got %s.', hashes['blocks'][block].hexdigest(), result['json']['checksum'])
         else:
           break
       else:
         logging.debug('Result was: ' + repr(result))
 
       retry = retry - 1
-      logging.warning('Segment failed to upload, retrying. %d tries left')
+      logging.warning('Segment failed to upload, retrying. %d tries left', retry)
 
     if retry == 0:
       logging.error('Unable to upload 1MB at offset %d', offset)
@@ -155,7 +155,7 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
     remain -= chunk
     offset += chunk
     if sys.stdout.isatty():
-      sys.stdout.write('\r%s%s, %.2f%% done' % (prefix, name, float(offset)/float(size) * 100.0))
+      sys.stdout.write('%s%s, %.2f%% done\r' % (prefix, name, float(offset)/float(size) * 100.0))
       sys.stdout.flush()
 
   if sys.stdout.isatty():
@@ -205,13 +205,12 @@ def awsCommand(config, args):
   p = Popen(cmd, stdout=PIPE, stderr=PIPE, cwd=config["prepdir"])
   out, err = p.communicate()
   if out is None or out == "":
-    #logging.debug("Output: " + repr(out))
     logging.debug("Error : " + repr(err))
 
   jout = None
   try:
     jout = json.loads(out)
   except:
-    logging.exception('Unable to parse JSON output')
+    pass
 
   return {"code" : p.returncode, "raw" : out, 'json' : jout, "error" : err }
