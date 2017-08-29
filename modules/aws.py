@@ -7,6 +7,7 @@ import json
 import io
 import hashlib
 import tempfile
+import sys
 
 def isConfigured():
   if not os.path.exists(os.path.expanduser('~/.aws/config')) or not os.path.exists(os.path.expanduser('~/.aws/credentials')):
@@ -119,10 +120,13 @@ def uploadFile(config, file, tmpfile, withPath=False):
   upload_start = round(time.time())
 
   # Chunk upload, 1MB chunks
+  if sys.stdout.isatty():
+    sys.stdout.write('\r%s, %.2f%% done' % (name, 0))
+    sys.stdout.flush()
   while remain > 0:
     chunk = remain
-    if chunk > 1048576:
-      chunk = 1048576
+    if chunk > 1024**2:
+      chunk = 1024**2
 
     # Exract chunk into temp file for upload purpose
     if not extractChunk(file, tmpfile, offset, 1024**2):
@@ -150,8 +154,12 @@ def uploadFile(config, file, tmpfile, withPath=False):
     block += 1
     remain -= chunk
     offset += chunk
-    logging.debug('%s, %.2f%% done', name, offset/size)
+    if sys.stdout.isatty():
+      sys.stdout.write('\r%s, %.2f%% done' % (name, float(offset)/float(size) * 100.0))
+      sys.stdout.flush()
 
+  if sys.stdout.isatty():
+    print("")
   # Time to finalize this deal
   result = awsCommand(config, ['complete-multipart-upload', '--vault-name', config['glacier-vault'], '--upload-id', uploadId, '--checksum', hashes['final'].hexdigest(), '--archive-size', str(size)])
   if result is None or result['code'] != 0:
@@ -188,7 +196,7 @@ def awsCommand(config, args):
   cmd += args
   cmd += ['--account-id', '-']
 
-  logging.debug("AWS command: " + repr(cmd))
+  #logging.debug("AWS command: " + repr(cmd))
 
   p = Popen(cmd, stdout=PIPE, stderr=PIPE, cwd=config["prepdir"])
   out, err = p.communicate()
