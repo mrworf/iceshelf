@@ -299,7 +299,7 @@ What essentially happens is that the "my rules" line is replaced with all the ru
 
 ### Section [glacier]
 
-This is, believe it or not, optional. Yes, you can run iceshelf locally and have it store the backup on whatever storage that the `done dir` option is pointing at. However, should you decide to use this for glacier, you'll first of all need to make sure that glacier-cmd is installed.
+This is, believe it or not, optional. Yes, you can run iceshelf locally and have it store the backup on whatever storage that the `done dir` option is pointing at. However, should you decide to use this for glacier, you'll first of all need to make sure that aws is installed.
 
 You can of course use both the glacier options and `done dir` if you prefer a local copy of any AWS Glacier copy.
 
@@ -389,7 +389,7 @@ No matter what options you add, you *must* point out the configuration file, or 
 
 # What's missing?
 
-There is as of yet no way to have iceshelf retreive the backup it created and uploaded. For now you're left to use the `glacier-cmd` tool itself to do that.
+There is as of yet no way to have iceshelf retreive the backup it created and uploaded. For now you're left to use the `aws` tool itself to do that. Once you've retrieved the file(s), you can either extract it manually yourself or try the iceshelf-restore tool which is in beta. It's fairly robust and is able to deal with most circumstances. It will not, however, allow you to easily download files from glacier. It's coming later.
 
 # Thoughts
 
