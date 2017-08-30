@@ -146,7 +146,8 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
         logging.debug('Result was: ' + repr(result))
 
       retry = retry - 1
-      logging.warning('Segment failed to upload, retrying. %d tries left', retry)
+      logging.warning('1MB @ %d failed to upload, retrying in %d seconds. %d tries left', offset, (10-retry)*30, retry)
+      time.sleep((10-retry) * 30)
 
     if retry == 0:
       logging.error('Unable to upload 1MB at offset %d', offset)
@@ -211,6 +212,7 @@ def awsCommand(config, args):
   try:
     jout = json.loads(out)
   except:
-    pass
+    logging.debug("Raw: " + repr(out))
+    logging.debug("Error: " + repr(err))
 
   return {"code" : p.returncode, "raw" : out, 'json' : jout, "error" : err }
