@@ -221,6 +221,7 @@ def awsCommand(config, args):
   out, err = p.communicate()
   if out is None or out == "":
     logging.debug("Error : " + repr(err))
+    logging.debug('Cmd: ' + repr(cmd))
 
   jout = None
   try:
