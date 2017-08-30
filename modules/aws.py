@@ -70,7 +70,7 @@ def extractChunk(file, tmp, offset, size):
       o.write(buf)
   return True
 
-def hashFile(file):
+def hashFile(file, chunkSize):
   if not os.path.exists(file):
     return None
 
@@ -78,7 +78,7 @@ def hashFile(file):
   blocks = []
   with io.open(file, 'rb') as f:
     while True:
-      data = f.read(1024**2)
+      data = f.read(chunkSize)
       if len(data) == 0:
         break
       v = h(data)
@@ -97,8 +97,7 @@ def hashFile(file):
   return {'blocks' : blocks, 'final' : recurse(blocks or [h(b"")])}
 
 def uploadFile(config, prefix, file, tmpfile, withPath=False):
-  hashes = hashFile(file)
-  if hashes is None:
+  if not os.path.exists(file):
     logging.error('File %s does not exist', file)
     return False
 
@@ -115,6 +114,11 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
     factor = math.ceil(float(chunkSize) / float(1024**2))
     chunkSize = int((1024**2) * factor)
     logging.debug('Using %dMB instead of 1MB due to size (%s) of the file we\'re uploading', factor, helper.formatSize(size))
+
+  hashes = hashFile(file, chunkSize)
+  if hashes is None:
+    logging.error('Unable to hash file %s', file)
+    return False
 
   # Initiate the upload
   result = awsCommand(config, ['initiate-multipart-upload', '--vault-name', config['glacier-vault'], '--archive-description', name, '--part-size', str(chunkSize)])
