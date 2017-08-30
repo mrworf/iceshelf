@@ -113,7 +113,7 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
     chunkSize = 1024**2
   else:
     factor = math.ceil(float(chunkSize) / float(1024**2))
-    chunkSize = (1024**2) * factor
+    chunkSize = int((1024**2) * factor)
     logging.debug('Using %dMB instead of 1MB due to size (%s) of the file we\'re uploading', factor, helper.formatSize(size))
 
   # Initiate the upload
