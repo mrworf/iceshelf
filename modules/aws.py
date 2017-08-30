@@ -8,6 +8,7 @@ import io
 import hashlib
 import tempfile
 import sys
+import math
 
 def isConfigured():
   if not os.path.exists(os.path.expanduser('~/.aws/config')) or not os.path.exists(os.path.expanduser('~/.aws/credentials')):
@@ -104,16 +105,25 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
   name = file
   if not withPath:
     name = os.path.basename(name)
+  size = remain = os.path.getsize(file)
 
-  # Initiate the upload (1MB increments)
-  result = awsCommand(config, ['initiate-multipart-upload', '--vault-name', config['glacier-vault'], '--archive-description', name, '--part-size', '1048576'])
+  # Due to limit of 10000 parts in an upload, we need to make it all fits
+  chunkSize = size / 10000
+  if chunkSize =< 1024**2:
+    chunkSize = 1024**2
+  else:
+    factor = math.ceil(float(chunkSize) / float(1024**2))
+    chunkSize = (1024**2) * factor
+    logging.debug('Using %dMB instead of 1MB due to size (%s) of the file we\'re uploading', factor, helper.formatSize(size))
+
+  # Initiate the upload
+  result = awsCommand(config, ['initiate-multipart-upload', '--vault-name', config['glacier-vault'], '--archive-description', name, '--part-size', str(chunkSize)])
   if result is None or result['code'] != 0 or 'uploadId' not in result['json']:
     logging.error('Unable to initiate upload: %s', repr(result))
     return False
   uploadId = result['json']['uploadId']
 
   # Start sending the file, one megabyte at a time until we have none left
-  size = remain = os.path.getsize(file)
   offset = 0
   block = 0
 
@@ -125,11 +135,11 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
     sys.stdout.flush()
   while remain > 0:
     chunk = remain
-    if chunk > 1024**2:
-      chunk = 1024**2
+    if chunk > chunkSize:
+      chunk = chunkSize
 
     # Exract chunk into temp file for upload purpose
-    if not extractChunk(file, tmpfile, offset, 1024**2):
+    if not extractChunk(file, tmpfile, offset, chunkSize):
       logging.error('Unable to extract chunk for upload')
       return False
 
