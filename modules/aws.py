@@ -109,7 +109,7 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
 
   # Due to limit of 10000 parts in an upload, we need to make it all fits
   chunkSize = size / 10000
-  if chunkSize =< 1024**2:
+  if chunkSize <= 1024**2:
     chunkSize = 1024**2
   else:
     factor = math.ceil(float(chunkSize) / float(1024**2))
@@ -156,11 +156,11 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
         logging.debug('Result was: ' + repr(result))
 
       retry = retry - 1
-      logging.warning('1MB @ %d failed to upload, retrying in %d seconds. %d tries left', offset, (10-retry)*30, retry)
+      logging.warning('%s @ %d failed to upload, retrying in %d seconds. %d tries left', helper.formatSize(chunkSize), offset, (10-retry)*30, retry)
       time.sleep((10-retry) * 30)
 
     if retry == 0:
-      logging.error('Unable to upload 1MB at offset %d', offset)
+      logging.error('Unable to upload %s at offset %d', helper.formatSize(chunkSize), offset)
       return False
     block += 1
     remain -= chunk
