@@ -115,23 +115,24 @@ def hashFile(file, chunkSize):
 
   # Produce final hash
   def recurse(hashlist, size):
+    # We've reached the chunksize we need, so store a copy before we continue
+    if size == chunkSize:
+      for o in hashlist:
+        final.append(o)
+
     output = [h(h1.digest() + h2.digest())
               for h1, h2 in zip(hashlist[::2], hashlist[1::2])]
     if len(hashlist) % 2:
         output.append(hashlist[-1])
 
-    # We've reached the chunksize we need, so store a copy before we continue
-    if size == chunkSize:
-      for o in output:
-        final.append(o)
     if len(output) > 1:
         return recurse(output, size*2)
     else:
       return output[0]
 
+  result = {'blocks' : final, 'final' : recurse(blocks or [h(b"")], 1024**2)}
   logging.debug('Hashes = %d, chunks = %d (will differ if chunkSize != 1MB)', len(blocks), len(final))
-
-  return {'blocks' : final, 'final' : recurse(blocks or [h(b"")], 1024**2)}
+  return result
 
 def uploadFile(config, prefix, file, tmpfile, withPath=False):
   if not os.path.exists(file):
@@ -158,7 +159,7 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
     chunkSize |= chunkSize >> 8
     chunkSize |= chunkSize >> 16
     chunkSize += 1
-    logging.debug('Using chunksize of %s due to size (%s) of the file we\'re uploading', helper.formatSize(chunkSize), helper.formatSize(size))
+  logging.debug('Using chunksize of %s based on size (%s) of the file we\'re uploading', helper.formatSize(chunkSize), helper.formatSize(size))
 
   hashes = hashFile(file, chunkSize)
   if hashes is None:
