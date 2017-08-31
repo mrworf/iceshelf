@@ -10,6 +10,33 @@ import tempfile
 import sys
 import math
 
+import threading
+from Queue import Queue
+
+# To be used once we know all is working as expected
+class Multithread:
+  def __init__(self, threads):
+    self.exit = False
+    self.queue = Queue()
+    for w in range(threads):
+      t = threading.Thread(target=self.worker)
+      t.daemon = True
+      t.start()
+
+  def worker(self):
+    while True:
+      work = self.queue.get()
+      work()
+      self.queue.task_done()
+
+  def add(self, process):
+    if self.exit:
+      return
+    self.queue.put(process)
+
+  def stop(self):
+    self.queue.join()
+
 def isConfigured():
   if not os.path.exists(os.path.expanduser('~/.aws/config')) or not os.path.exists(os.path.expanduser('~/.aws/credentials')):
     logging.error('AWS is not configured, please run aws tool with configure for current user')
@@ -76,25 +103,35 @@ def hashFile(file, chunkSize):
 
   h = hashlib.sha256
   blocks = []
+  final = []
+  # Do it in 1MB chunks, regardless of chunkSize
   with io.open(file, 'rb') as f:
     while True:
-      data = f.read(chunkSize)
+      data = f.read(1024**2)
       if len(data) == 0:
         break
       v = h(data)
       blocks.append(v)
 
   # Produce final hash
-  def recurse(hashlist):
+  def recurse(hashlist, size):
     output = [h(h1.digest() + h2.digest())
               for h1, h2 in zip(hashlist[::2], hashlist[1::2])]
     if len(hashlist) % 2:
         output.append(hashlist[-1])
+
+    # We've reached the chunksize we need, so store a copy before we continue
+    if size == chunkSize:
+      for o in output:
+        final.append(o)
     if len(output) > 1:
-        return recurse(output)
+        return recurse(output, size*2)
     else:
       return output[0]
-  return {'blocks' : blocks, 'final' : recurse(blocks or [h(b"")])}
+
+  logging.debug('Hashes = %d, chunks = %d (will differ if chunkSize != 1MB)', len(blocks), len(final))
+
+  return {'blocks' : final, 'final' : recurse(blocks or [h(b"")], 1024**2)}
 
 def uploadFile(config, prefix, file, tmpfile, withPath=False):
   if not os.path.exists(file):
@@ -111,9 +148,17 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
   if chunkSize <= 1024**2:
     chunkSize = 1024**2
   else:
+    # Make sure it's a power of two
     factor = math.ceil(float(chunkSize) / float(1024**2))
     chunkSize = int((1024**2) * factor)
-    logging.debug('Using %dMB instead of 1MB due to size (%s) of the file we\'re uploading', factor, helper.formatSize(size))
+    chunkSize -= 1
+    chunkSize |= chunkSize >> 1
+    chunkSize |= chunkSize >> 2
+    chunkSize |= chunkSize >> 4
+    chunkSize |= chunkSize >> 8
+    chunkSize |= chunkSize >> 16
+    chunkSize += 1
+    logging.debug('Using chunksize of %s due to size (%s) of the file we\'re uploading', helper.formatSize(chunkSize), helper.formatSize(size))
 
   hashes = hashFile(file, chunkSize)
   if hashes is None:
