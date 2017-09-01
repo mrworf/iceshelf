@@ -134,7 +134,7 @@ def hashFile(file, chunkSize):
   logging.debug('Hashes = %d, chunks = %d (will differ if chunkSize != 1MB)', len(blocks), len(final))
   return result
 
-def uploadFile(config, prefix, file, tmpfile, withPath=False):
+def uploadFile(config, prefix, file, tmpfile, bytesDone=0, bytesTotal=0, withPath=False):
   if not os.path.exists(file):
     logging.error('File %s does not exist', file)
     return False
@@ -181,7 +181,7 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
 
   # Chunk upload, 1MB chunks
   if sys.stdout.isatty():
-    sys.stdout.write('%s%s, %.2f%% done\r' % (prefix, name, 0))
+    sys.stdout.write('%s%s, %.2f%% done (%.2f%% total)\r' % (prefix, name, 0, float(bytesDone)/float(bytesTotal)*100.0))
     sys.stdout.flush()
   while remain > 0:
     chunk = remain
@@ -203,7 +203,13 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
         else:
           break
       else:
-        logging.debug('Result was: ' + repr(result))
+        if 'RequestTimeoutException' in result['error']:
+          if sys.stdout.isatty():
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+          logging.warn('Timeout')
+        else:
+          logging.debug('Result was: ' + repr(result))
 
       retry = retry - 1
       logging.warning('%s @ %d failed to upload, retrying in %d seconds. %d tries left', helper.formatSize(chunkSize), offset, (10-retry)*30, retry)
@@ -216,7 +222,7 @@ def uploadFile(config, prefix, file, tmpfile, withPath=False):
     remain -= chunk
     offset += chunk
     if sys.stdout.isatty():
-      sys.stdout.write('%s%s, %.2f%% done\r' % (prefix, name, float(offset)/float(size) * 100.0))
+      sys.stdout.write('%s%s, %.2f%% done (%.2f%% total)\r' % (prefix, name, float(offset)/float(size) * 100.0, float(bytesDone + offset)/float(bytesTotal) * 100.0))
       sys.stdout.flush()
 
   if sys.stdout.isatty():
@@ -246,7 +252,7 @@ def uploadFiles(config, files, bytes):
   for file in files:
     i += 1
     file = os.path.join(config["prepdir"], file)
-    if not uploadFile(config, "(%d of %d, %.2f%%) " % (i, len(files), float(d)/float(bytes) * 100), file, tmp):
+    if not uploadFile(config, "(%d of %d) " % (i, len(files), file, tmp, d, bytes):
       return False
     d += os.path.getsize(file)
   os.unlink(tmp)
@@ -265,15 +271,15 @@ def awsCommand(config, args):
 
   p = Popen(cmd, stdout=PIPE, stderr=PIPE, cwd=config["prepdir"])
   out, err = p.communicate()
-  if out is None or out == "":
-    logging.debug("Error : " + repr(err))
-    logging.debug('Cmd: ' + repr(cmd))
 
   jout = None
   try:
     jout = json.loads(out)
   except:
-    logging.debug("Raw: " + repr(out))
-    logging.debug("Error: " + repr(err))
+    pass
+
+  if out is None or out == "":
+    logging.debug("Error : " + repr(err))
+    logging.debug('Cmd: ' + repr(cmd))
 
   return {"code" : p.returncode, "raw" : out, 'json' : jout, "error" : err }
