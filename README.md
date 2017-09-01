@@ -66,7 +66,7 @@ In order to be able to run this, you need a few other parts installed.
 - python-gnupg - Encryption & Signature (NOT `gnupg`, it's `python-gnupg`)
   Ubuntu comes with a version, but unfortunately it's too old. You should install this using the `pip` tool to make sure you get a current version.
 - par2 - Parity tool
-- aws - In order to upload archive to glacier (see 
+- aws - In order to upload archive to glacier (see
 
 ### Installing on Ubuntu
 
@@ -306,6 +306,10 @@ You can of course use both the glacier options and `done dir` if you prefer a lo
 #### vault
 
 The name of the vault. Iceshelf will automatically create the vault if it doesn't exist, it will also avoid doing so to minimize the operations towards the AWS to avoid extra fees. It does this by only creating/checking the existance of the vault when you run iceshelf the first time or when you change the vault name from its previous name.
+
+#### threads
+
+The number of threads to use during upload. The default is 4. This can be tweaked to improve performance. For instance, when sending content to far away datacenters the throughput per connection might be as low as 200K/s, which will make uploads take forever. By using more threads, iceshelf will upload multiple parts of a file concurrently.
 
 NOTE! You will need to run ```aws configure``` for the user which will be running iceshelf in order to set up the aws tool.
 

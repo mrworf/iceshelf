@@ -10,32 +10,10 @@ import tempfile
 import sys
 import math
 
+import random
+
 import threading
 from Queue import Queue
-
-# To be used once we know all is working as expected
-class Multithread:
-  def __init__(self, threads):
-    self.exit = False
-    self.queue = Queue()
-    for w in range(threads):
-      t = threading.Thread(target=self.worker)
-      t.daemon = True
-      t.start()
-
-  def worker(self):
-    while True:
-      work = self.queue.get()
-      work()
-      self.queue.task_done()
-
-  def add(self, process):
-    if self.exit:
-      return
-    self.queue.put(process)
-
-  def stop(self):
-    self.queue.join()
 
 def isConfigured():
   if not os.path.exists(os.path.expanduser('~/.aws/config')) or not os.path.exists(os.path.expanduser('~/.aws/credentials')):
@@ -85,17 +63,123 @@ def createVault(config):
   if result is None or result["code"] != 0:
     logging.error("Failed to create vault: %s", repr(result))
     return False
-
   logging.info("Vault created")
   return True
 
-def extractChunk(file, tmp, offset, size):
-  with io.open(file, 'rb') as i:
-    i.seek(offset)
-    with io.open(tmp, 'wb') as o:
-      buf = i.read(size)
-      o.write(buf)
-  return True
+class uploadCoordinator:
+  def __init__(self, threads=4):
+    self.threads = threads
+    self.sent = 0
+    self.began = round(time.time())
+    self.exit = False
+    self.queue = Queue()
+
+  def process(self):
+    self.began = round(time.time())
+    for w in range(self.threads):
+      t = threading.Thread(target=self.worker)
+      t.daemon = True
+      t.start()
+
+  def worker(self):
+    run = True
+    while run and not self.exit:
+      try:
+        entry = self.queue.get(False)
+      except:
+        break
+      sent = entry.work()
+      if sent == -1:
+        logging.error("WE FAILED!")
+        run = False
+        self.exit = True
+      else:
+        self.sent += sent
+      entry.cleanup()
+      self.queue.task_done()
+    self.threads -= 1
+
+  def add(self, process):
+    if self.exit:
+      return False
+    self.queue.put(process)
+    return True
+
+  def getTime(self):
+    t = round(time.time()) - self.began
+    if t < 1:
+      return 1
+    return t
+
+  def getSent(self):
+    return self.sent
+
+  def isDone(self):
+    return self.threads == 0 | self.exit
+
+  def finish(self):
+    self.queue.join()
+    return not self.exit
+
+class uploadJob:
+  def __init__(self, config, file, name, offset, size, checksum, uploadId):
+    self.config = config
+    self.file = file
+    self.name = name
+    self.offset = offset
+    self.size = size
+    self.checksum = checksum
+    self.uploadId = uploadId
+
+    self.retries = 10
+    tf = tempfile.NamedTemporaryFile(dir='/tmp', delete=False)
+    if tf is None:
+      logging.error('Unable to generate temporary file')
+      return -1
+    self.tmpfile = tf.name
+    tf.close()
+
+  def extractChunk(self, offset, size):
+    with io.open(self.file, 'rb') as i:
+      i.seek(offset)
+      with io.open(self.tmpfile, 'wb') as o:
+        buf = i.read(size)
+        o.write(buf)
+    return True
+
+  def cleanup(self):
+    if os.path.exists(self.tmpfile):
+      os.unlink(self.tmpfile)
+
+  def work(self):
+    # Exract chunk into temp file for upload purpose
+    if not self.extractChunk(self.offset, self.size):
+      logging.error('Unable to extract chunk for upload')
+      return False
+
+    dataRange = 'bytes %d-%d/*' % (self.offset, self.offset + self.size - 1)
+    self.retry = self.retries
+    while self.retry > 0:
+      result = awsCommand(self.config, ['upload-multipart-part', '--vault-name', self.config['glacier-vault'], '--cli-input-json', '{"uploadId": "' + self.uploadId + '"}', '--body', self.tmpfile, '--range', dataRange])
+      if result is not None and result['json'] is not None and 'checksum' in result['json']:
+        if self.checksum != result['json']['checksum']:
+          logging.error('Hash does not match, expected %s got %s.', self.checksum, result['json']['checksum'])
+        else:
+          break
+      else:
+        if 'RequestTimeoutException' in result['error']:
+          logging.warn('Timeout')
+        else:
+          logging.debug('Result was: ' + repr(result))
+
+      self.retry = self.retry - 1
+      logging.warning('%s @ %d failed to upload, retrying in %d seconds. %d tries left', helper.formatSize(self.size), self.offset, (10-self.retry)*30, self.retry)
+      time.sleep((10-self.retry) * 30)
+
+    if self.retry == 0:
+      logging.error('Unable to upload %s at offset %d', helper.formatSize(self.size), self.offset)
+      return -1
+    return self.size
 
 def hashFile(file, chunkSize):
   if not os.path.exists(file):
@@ -131,10 +215,9 @@ def hashFile(file, chunkSize):
       return output[0]
 
   result = {'blocks' : final, 'final' : recurse(blocks or [h(b"")], 1024**2)}
-  logging.debug('Hashes = %d, chunks = %d (will differ if chunkSize != 1MB)', len(blocks), len(final))
   return result
 
-def uploadFile(config, prefix, file, tmpfile, bytesDone=0, bytesTotal=0, withPath=False):
+def uploadFile(config, prefix, file, bytesDone=0, bytesTotal=0, withPath=False):
   if not os.path.exists(file):
     logging.error('File %s does not exist', file)
     return False
@@ -144,7 +227,7 @@ def uploadFile(config, prefix, file, tmpfile, bytesDone=0, bytesTotal=0, withPat
     name = os.path.basename(name)
   size = remain = os.path.getsize(file)
 
-  # Due to limit of 10000 parts in an upload, we need to make it all fits
+  # Due to limit of 10000 parts in an upload, we need to make it all fit
   chunkSize = size / 10000
   if chunkSize <= 1024**2:
     chunkSize = 1024**2
@@ -176,92 +259,74 @@ def uploadFile(config, prefix, file, tmpfile, bytesDone=0, bytesTotal=0, withPat
   # Start sending the file, one megabyte at a time until we have none left
   offset = 0
   block = 0
+  work = uploadCoordinator(config['glacier-threads'])
 
-  upload_start = round(time.time())
-
-  # Chunk upload, 1MB chunks
-  if sys.stdout.isatty():
-    sys.stdout.write('%s%s, %.2f%% done (%.2f%% total)\r' % (prefix, name, 0, float(bytesDone)/float(bytesTotal)*100.0))
-    sys.stdout.flush()
+  # Queue up all the work
   while remain > 0:
     chunk = remain
     if chunk > chunkSize:
       chunk = chunkSize
 
-    # Exract chunk into temp file for upload purpose
-    if not extractChunk(file, tmpfile, offset, chunkSize):
-      logging.error('Unable to extract chunk for upload')
-      return False
+    job = uploadJob(config, file, name, offset, chunk, hashes['blocks'][block].hexdigest(), uploadId)
+    work.add(job)
 
-    dataRange = 'bytes %d-%d/*' % (offset, offset + chunk - 1)
-    retry = 10
-    while retry > 0:
-      result = awsCommand(config, ['upload-multipart-part', '--vault-name', config['glacier-vault'], '--upload-id', uploadId, '--body', tmpfile, '--range', dataRange])
-      if result is not None and result['json'] is not None and 'checksum' in result['json']:
-        if hashes['blocks'][block].hexdigest() != result['json']['checksum']:
-          logging.error('Hash does not match, expected %s got %s.', hashes['blocks'][block].hexdigest(), result['json']['checksum'])
-        else:
-          break
-      else:
-        if 'RequestTimeoutException' in result['error']:
-          if sys.stdout.isatty():
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-          logging.warn('Timeout')
-        else:
-          logging.debug('Result was: ' + repr(result))
-
-      retry = retry - 1
-      logging.warning('%s @ %d failed to upload, retrying in %d seconds. %d tries left', helper.formatSize(chunkSize), offset, (10-retry)*30, retry)
-      time.sleep((10-retry) * 30)
-
-    if retry == 0:
-      logging.error('Unable to upload %s at offset %d', helper.formatSize(chunkSize), offset)
-      return False
     block += 1
     remain -= chunk
     offset += chunk
-    if sys.stdout.isatty():
-      sys.stdout.write('%s%s, %.2f%% done (%.2f%% total)\r' % (prefix, name, float(offset)/float(size) * 100.0, float(bytesDone + offset)/float(bytesTotal) * 100.0))
-      sys.stdout.flush()
 
+  # Wait for it...
+  work.process()
+  while not work.isDone():
+    time.sleep(1)
+    if sys.stdout.isatty():
+      # Extra spaces at the end to clear remnants when numbers change
+      sys.stdout.write('%s%s @ %s, %.2f%% done (%.2f%% total)          \r' % (
+        prefix,
+        name,
+        helper.formatSpeed(work.getSent() / work.getTime()),
+        float(work.getSent())/float(size) * 100.0,
+        float(bytesDone + work.getSent())/float(bytesTotal) * 100.0
+        )
+      )
+      sys.stdout.flush()
   if sys.stdout.isatty():
-    print("")
-  # Time to finalize this deal
-  result = awsCommand(config, ['complete-multipart-upload', '--vault-name', config['glacier-vault'], '--upload-id', uploadId, '--checksum', hashes['final'].hexdigest(), '--archive-size', str(size)])
-  if result is None or result['code'] != 0:
-    logging.error('Failed to upload %s: %s', file, repr(result))
+    sys.stdout.write('\n')
+    sys.stdout.flush()
+
+  if not work.finish():
+    logging.error('Failed to upload the file, aborting')
+    awsCommand(config, ['abort-multipart-upload', '--vault-name', config['glacier-vault'], '--cli-input-json', '{"uploadId": "' + uploadId + '"}'])
     return False
 
-  upload_time = max(round(time.time()) - upload_start, 1)
-  logging.debug('%s @ %s', file, helper.formatSpeed(size / upload_time))
+  # Time to finalize this deal
+  result = awsCommand(config, ['complete-multipart-upload', '--vault-name', config['glacier-vault'], '--cli-input-json', '{"uploadId": "' + uploadId + '"}', '--checksum', hashes['final'].hexdigest(), '--archive-size', str(size)])
+  if result is None or result['code'] != 0:
+    logging.error('Unable to complete upload of %s: %s', file, repr(result))
+    return False
   return True
 
 def uploadFiles(config, files, bytes):
   logging.info("Uploading %d files (%s) to glacier, this may take a while", len(files), helper.formatSize(bytes))
-
-  tf = tempfile.NamedTemporaryFile(dir='/tmp', delete=False)
-  if tf is None:
-    logging.error('Unable to generate temporary file')
-    return False
-  tmp = tf.name
-  tf.close()
 
   i = 0
   d = 0
   for file in files:
     i += 1
     file = os.path.join(config["prepdir"], file)
-    if not uploadFile(config, "(%d of %d) " % (i, len(files), file, tmp, d, bytes):
+    if not uploadFile(config, "(%d of %d) " % (i, len(files)), file, d, bytes):
       return False
     d += os.path.getsize(file)
-  os.unlink(tmp)
   return True
 
-def awsCommand(config, args):
+def awsCommand(config, args, dry=False):
   if config["glacier-vault"] is None:
     logging.error("awsCommand() called without proper settings")
     return None
+
+  # Fake it until you make it
+  if dry:
+    time.sleep(random.randint(1, 50) / 10)
+    return  {"code" : 0, "raw" : '', 'json' : {'checksum' : 'something', 'uploadId' : 'someid' }, "error" : '' }
 
   cmd = ['aws', '--output', 'json', 'glacier']
   cmd += args

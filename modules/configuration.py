@@ -27,6 +27,7 @@ setting = {
   "donedir": "backup/done/",
   "maxkeep": 0,
   "glacier-vault" : None,
+  "glacier-threads" : 4,
   "prefix" : "",
   "detect-move": False,
   "create-paths": False,
@@ -84,6 +85,7 @@ def parse(filename, onlysecurity=False):
 
   config.add_section("glacier")
   config.set("glacier", "vault", "")
+  config.set("glacier", "threads", "4")
 
   config.add_section("custom")
   config.set("custom", "pre command", "")
@@ -306,6 +308,13 @@ def parse(filename, onlysecurity=False):
     if which('aws') is None:
       logging.error('AWS command line tool not in path. Is it installed?')
       return None
+    if config.has_option("glacier", "threads") and config.get("glacier", "threads") != "":
+      setting["glacier-threads"] = config.getint("glacier", "threads")
+      if setting["glacier-threads"] < 1:
+        logging.error('Threads for glacier cannot be less than one')
+        return None
+      if setting["glacier-threads"] > 16:
+        logging.warning('Using more than 16 threads for glacier upload doesn\'t necessarily make it faster')
 
   # Custom options (not in-use yet
   if config.has_section("custom"):
