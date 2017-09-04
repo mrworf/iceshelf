@@ -295,6 +295,7 @@ def uploadFile(config, prefix, file, bytesDone=0, bytesTotal=0, withPath=False):
 
   if not work.finish():
     logging.error('Failed to upload the file, aborting')
+    # Note! Should use JSON since plain arguments seems to not work
     awsCommand(config, ['abort-multipart-upload', '--vault-name', config['glacier-vault'], '--cli-input-json', '{"uploadId": "' + uploadId + '"}'])
     return False
 
