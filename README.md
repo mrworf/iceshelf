@@ -391,13 +391,28 @@ You can also provide a few options via the commandline, these are not available 
 
 No matter what options you add, you *must* point out the configuration file, or you will not get any results.
 
+## Return codes
+
+Depending on what happened during the run, iceshelf will return the following exit codes:
+
+0 = All good, operation finished successfully
+
+1 = Configuration issue
+
+2 = Unable to gather all data, meaning that while creating the archive to upload, some kind of I/O related error happened. The log should give you an idea of what. Can happen when files disappear during archive creation
+
+3 = Amount of files to backup exceed the `max size` parameter and `persuasive` wasn't enabled
+
+10 = Backup was successful, but there are more files to backup. Happens if `persuasive` and `max size` is enabled and the amount of data exceeds `max size`. Running the tool again will gather any files which weren't backed up. Ideally you continue to run the tool until it returns 0
+
+255 = Generic error, see log output
+
 # What's missing?
 
-There is as of yet no way to have iceshelf retreive the backup it created and uploaded. For now you're left to use the `aws` tool itself to do that. Once you've retrieved the file(s), you can either extract it manually yourself or try the iceshelf-restore tool which is in beta. It's fairly robust and is able to deal with most circumstances. It will not, however, allow you to easily download files from glacier. It's coming later.
+There is as of yet no way to have iceshelf retreive the backup it created and uploaded. For now you're left to use the `aws` tool itself to do that. Once you've retrieved the file(s), you can either extract it manually yourself or try the [iceshelf-restore](README.iceshelf-restore.md) tool which is in beta. It's fairly robust and is able to deal with most circumstances. It will not, however, allow you to easily download files from glacier. It's coming later.
 
 # Thoughts
 
-- Is par2 usage just paranoia?
 - Better options than par2 which are open-source?
 - JSON is probably not going to cut-it in the future for local metadata storage
 
