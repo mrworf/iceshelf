@@ -280,12 +280,13 @@ def uploadFile(config, prefix, file, bytesDone=0, bytesTotal=0, withPath=False):
     time.sleep(1)
     if sys.stdout.isatty():
       # Extra spaces at the end to clear remnants when numbers change
-      sys.stdout.write('%s%s @ %s, %.2f%% done (%.2f%% total)          \r' % (
+      sys.stdout.write('%s%s @ %s, %.2f%% done (%.2f%% total, %s remaining)          \r' % (
         prefix,
         name,
         helper.formatSpeed(work.getSent() / work.getTime()),
         float(work.getSent())/float(size) * 100.0,
-        float(bytesDone + work.getSent())/float(bytesTotal) * 100.0
+        float(bytesDone + work.getSent())/float(bytesTotal) * 100.0,
+        helper.formatTime((float(bytesTotal) - float(bytesDone + work.getSent())) / (work.getSent() / work.getTime()))
         )
       )
       sys.stdout.flush()
