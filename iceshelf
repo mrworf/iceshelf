@@ -170,16 +170,16 @@ def collectFile(filename):
 
 def collectSources(sources):
   # Time to start building a list of files
-  result = True
+  result = {'files':[], 'size':0}
   for name,path in sources.iteritems():
     logging.info("Processing \"%s\" (%s)", name, path)
     if os.path.isfile(path):
       if not configuration.isExcluded(path):
         if not collectFile(path):
+          result['files'].append(path)
+          result['size'] += os.path.getsize(path)
           if not config["persuasive"] and not cmdline.changes:
-            return False
-          else:
-            result = False
+            return result
     else:
       for root, dirs, files in os.walk(path):
         for f in files:
@@ -193,11 +193,15 @@ def collectSources(sources):
 
             if filename is not None:
               if not collectFile(filename):
+                result['files'].append(path)
+                result['size'] += os.path.getsize(path)
                 if not config["persuasive"] and not cmdline.changes:
                   logging.debug("Not persuasive")
-                  return False
-                else:
-                  result = False
+                  return result
+
+  # Make this easier to test by the caller if we have zero files we skipped
+  if len(result['files']) == 0:
+    result = None
   return result
 
 
@@ -528,7 +532,7 @@ except OSError as e:
 fileutils.deleteTree(config["prepdir"])
 
 logging.info("Checking sources for changes")
-gotall = collectSources(config['sources'])
+missedFiles = collectSources(config['sources'])
 
 logging.debug("Processing file structure changes")
 
@@ -576,14 +580,17 @@ if cmdline.changes:
     logging.info("No file(s) changed or added since last backup")
     sys.exit(0)
 
-if len(newFiles) == 0 and not gotall:
+if len(newFiles) == 0 and missedFiles is not None:
+  logging.info("Done. There were files which didn't fit the maxsize limit (%d files, %s)", len(missedFiles['files']), helper.formatSize(missedFiles['size']))
+  if cmdline.debug:
+    for f in missedFiles['files']:
+      logging.debug('  Ignored: "%s"', f)
   if config["ignore-overlimit"]:
-    logging.info("Done. There were files which didn't fit the maxsize limit, but they were ignored")
+    logging.info('Since ignore overlimit was set, this is still considered a success')
     sys.exit(0)
-  logging.error("Can't continue, you have files bigger than maxsize")
-  sys.exit(3)
-
-
+  else:
+    logging.error("Cannot continue since there are files bigger than maxsize")
+    sys.exit(3)
 
 # Time to compress
 files = gatherData()
@@ -742,7 +749,10 @@ if config["donedir"] is not None:
       logging.info("Deleting \"%s\"", folder)
       shutil.rmtree(os.path.join(config["donedir"], folder))
 
-if not gotall:
-  logging.warn("Reached size limit, recommend running again after this session")
+if missedFiles is not None:
+  logging.warn("Reached size limit, recommend running again after this session (skipped %d files, %s)", len(missedFiles['files']), helper.formatSize(missedFiles['size']))
+  if cmdline.debug:
+    for f in missedFiles['files']:
+      logging.debug('  Skipped: "%s"', f)
   sys.exit(10)
 sys.exit(0)
