@@ -193,7 +193,7 @@ def collectSources(sources):
 
             if filename is not None:
               if not collectFile(filename):
-                result['files'].append(path)
+                result['files'].append(filename)
                 result['size'] += os.path.getsize(path)
                 if not config["persuasive"] and not cmdline.changes:
                   logging.debug("Not persuasive")
@@ -385,6 +385,11 @@ config = configuration.parse(cmdline.config)
 if config is None:
   logging.error("Configuration is broken, please check %s" % cmdline.config)
   sys.exit(1)
+
+if cmdline.debug:
+  logging.debug('Active config:')
+  for k in config:
+    logging.debug('"%s" = "%s"', k, config[k])
 
 # Check version
 if config["checkupdate"]:
@@ -584,7 +589,7 @@ if len(newFiles) == 0 and missedFiles is not None:
   logging.info("Done. There were files which didn't fit the maxsize limit (%d files, %s)", len(missedFiles['files']), helper.formatSize(missedFiles['size']))
   if cmdline.debug:
     for f in missedFiles['files']:
-      logging.debug('  Ignored: "%s"', f)
+      logging.debug('Ignored: "%s"', f)
   if config["ignore-overlimit"]:
     logging.info('Since ignore overlimit was set, this is still considered a success')
     sys.exit(0)
@@ -753,6 +758,6 @@ if missedFiles is not None:
   logging.warn("Reached size limit, recommend running again after this session (skipped %d files, %s)", len(missedFiles['files']), helper.formatSize(missedFiles['size']))
   if cmdline.debug:
     for f in missedFiles['files']:
-      logging.debug('  Skipped: "%s"', f)
+      logging.debug('Skipped: "%s"', f)
   sys.exit(10)
 sys.exit(0)
