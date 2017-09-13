@@ -4,7 +4,7 @@
 SHOWSUCCESS=true
 USER=iceshelf
 CONF=/home/${USER}/backup.conf
-EXEC=/home/${USER}/iceshelf
+EXEC=/home/${USER}/iceshelf/iceshelf
 
 # Allow you to override the defaults above without having to
 # edit this file.
