@@ -9,7 +9,7 @@ User=iceshelf
 Group=iceshelf
 
 # Configure paths to iceshelf and config here
-Environment="ICESHELF=/home/iceshelf/iceshelf"
+Environment="ICESHELF=/home/iceshelf/iceshelf/iceshelf"
 Environment="CONFIG=/home/iceshelf/backup.conf"
 
 Type=simple

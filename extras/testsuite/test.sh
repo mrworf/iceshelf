@@ -47,7 +47,6 @@ prep dir: tmp/
 data dir: data/
 done dir: done/
 [options]
-max size:
 delta manifest: yes
 compress: no
 persuasive: yes
@@ -78,6 +77,12 @@ function lastArchive() {
 # Param 4: Configfile to use
 # Param 5: List of file remaining in compare
 # Param 6+ sent verbaitum to iceshelf
+#
+# Special variables that test can override:
+#  OPT_SUCCESSRET Default zero, this is the return code expected from iceshelf.
+#  OPT_IGNORECOMP Default false, if true skips directory comparison.
+#
+# All changes to these variables are reset at end of runTest() call
 #
 function runTest() {
   ERROR=true # Catch all
@@ -117,7 +122,7 @@ function runTest() {
   fi
 
   RESULT2="$(${ICESHELF} 2>&1 config_$4 --debug ${@:6})"
-  if [ $? -ne 0 ]; then
+  if [ $? -ne $OPT_SUCCESSRET ]; then
     echo "=== Iceshelf failed:"
     echo "$RESULT2"
     return 255
@@ -177,21 +182,23 @@ function runTest() {
     return 255
   fi
 
-  DIFF=$(diff -r content compare/content)
-  if [ $? -eq 0 ]; then
-    DIFF=""
-  fi
   FAILED=false
-  if [ "$5" != "" ]; then
-    if [ "${5:0:1}" == "^" ]; then
-      if ! [[ "${DIFF}" =~ $5 ]]; then
+  if ! $OPT_IGNORECOMP; then
+    DIFF=$(diff -r content compare/content)
+    if [ $? -eq 0 ]; then
+      DIFF=""
+    fi
+    if [ "$5" != "" ]; then
+      if [ "${5:0:1}" == "^" ]; then
+        if ! [[ "${DIFF}" =~ $5 ]]; then
+          FAILED=true
+        fi
+      elif [ "${DIFF}" != "$5" ]; then
         FAILED=true
       fi
-    elif [ "${DIFF}" != "$5" ]; then
+    elif [ "${DIFF}" != "" ]; then
       FAILED=true
     fi
-  elif [ "${DIFF}" != "" ]; then
-    FAILED=true
   fi
 
   if $FAILED ; then
@@ -227,6 +234,8 @@ function runTest() {
   # Final step, sync content with compare
   rsync -avr --delete content/ compare/content/ 2>/dev/null >/dev/null
   ERROR=false
+  OPT_SUCCESSRET=0
+  OPT_IGNORECOMP=false
   return 0
 }
 
@@ -279,6 +288,8 @@ fi
 
 # Runs through ALL the versions...
 ERROR=false
+OPT_SUCCESSRET=0
+OPT_IGNORECOMP=false
 for VARIANT in "${VARIATIONS[@]}"; do
   EXTRAS="[security]"
   if [[ "$VARIANT" == *"encrypted"* ]]; then
@@ -299,6 +310,7 @@ for VARIANT in "${VARIATIONS[@]}"; do
   generateConfig filelist "[options]\ncreate filelist: yes\n$EXTRAS"
   generateConfig encryptmani "[security]\nencrypt manifest: yes\n$EXTRAS"
   generateConfig changehash "[options]\nchange method: sha256\n$EXTRAS"
+  generateConfig maxsize "[options]\nmax size: 1\n$EXTRAS"
 
   # First, make sure NO test uses the same case-number, that's an AUTO FAIL!
   ALL_CASES="$(ls -1 tests/ | wc --lines)"

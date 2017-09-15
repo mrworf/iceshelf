@@ -6,12 +6,13 @@ A simple tool to allow storage of private, incremental backups using Amazon's Gl
 
 - Encrypts all backups using GPG private/public key
 - Signs all files it uploads (tamper detection)
-- Can upload separate PAR2 file for parity correction
+- Can upload separate PAR2 file for parity correction (allows for a certain amount of bitrot)
 - Supports segmentation of upload (but not of files, yet)
-- Primarily designed for AWS Glacier
+- Primarily designed for AWS Glacier but can be used with other services
 - Tracks backups locally to help locate the file needed to restore
 - Keeps the exact directory structure of the backed up files
 - Most features can be turned on/off and customized
+- Provides paper-based GPG key backup/restore solution
 
 Due to the need to work well with Glacier, any change to a file will cause it
 to reupload the same file (with the new content). This backup solution is not
@@ -36,12 +37,13 @@ me, finding cool names (phun intended) for projects is not always easy*
 7. A manifest of all files in the archive + checksums is stored as a JSON file
 8. The manifest is signed (using ASCII instead of binary to keep it readable)
 9. Parity file(s) are created to allow the archive to be restored should bitrot happen
-10. All parity files are signed
-11. Resulting files are uploaded to the cloud (may take a while with AWS Glacier, skipped if no cloud config))
-12. Backup is copied to safe keeping (if done directory is specified)
-13. Prep directory is emptied
-14. New backup is added to local database
-15. Local database is saved as JSON
+10. Filelist with checksums is created
+11. All extra files (filelist, parity, etc) files are signed
+12. Resulting files are uploaded to the cloud (may take a while with AWS Glacier, skipped if no cloud config))
+13. Backup is copied to safe keeping (if done directory is specified)
+14. Prep directory is emptied
+15. New backup is added to local database
+16. Local database is saved as JSON
 
 A lot of things here can be customized, but in a nutshell, this is what the tool does with all the bells and whistles enabled.
 
@@ -66,11 +68,11 @@ In order to be able to run this, you need a few other parts installed.
 - python-gnupg - Encryption & Signature (NOT `gnupg`, it's `python-gnupg`)
   Ubuntu comes with a version, but unfortunately it's too old. You should install this using the `pip` tool to make sure you get a current version.
 - par2 - Parity tool
-- aws - In order to upload archive to glacier (see
+- aws - In order to upload archive to glacier
 
 ### Installing on Ubuntu
 
-This is the simple version which points out what commands to run. Please consider reading through before running since it will install things (such as pip) and place code (like glacier) in a manner which you might not agree with. It is based on what and how I installed the requirements on a Ubuntu LTS 14 release.
+This is the simple version which points out what commands to run. Please consider reading through before running since it will install things (such as pip) in a manner which you might not agree with. It is based on what and how I installed the requirements on a Ubuntu LTS 14 release.
 
 1. GPG
   Easy enough, ubuntu comes with it pre-installed
@@ -86,10 +88,12 @@ This is the simple version which points out what commands to run. Please conside
   sudo apt-get install par2
   ```
 
-4. Glacier
+4. AWS Glacier
   ```
   sudo apt install awscli
   ```
+
+For more details, see the [step-by-step guide](https://github.com/mrworf/iceshelf/wiki) in the wiki.
 
 ## Configuration file
 
@@ -309,9 +313,9 @@ The name of the vault. Iceshelf will automatically create the vault if it doesn'
 
 #### threads
 
-The number of threads to use during upload. The default is 4. This can be tweaked to improve performance. For instance, when sending content to far away datacenters the throughput per connection might be as low as 200K/s, which will make uploads take forever. By using more threads, iceshelf will upload multiple parts of a file concurrently.
+The number of threads to use during upload. The default is 4. This can be tweaked to improve performance. For instance, when sending content to far away datacenters the throughput per connection might be as low as 200K/s, which will make uploads take a long time. By using more threads, iceshelf will upload multiple parts of a file concurrently.
 
-NOTE! You will need to run ```aws configure``` for the user which will be running iceshelf in order to set up the aws tool.
+NOTE! You will need to run ```aws configure``` for the user which will be running iceshelf in order to set up the aws tool. Iceshelf will try to make sure that this has been done and stop before starting the process.
 
 ### Section [security]
 
@@ -391,13 +395,28 @@ You can also provide a few options via the commandline, these are not available 
 
 No matter what options you add, you *must* point out the configuration file, or you will not get any results.
 
+## Return codes
+
+Depending on what happened during the run, iceshelf will return the following exit codes:
+
+0 = All good, operation finished successfully
+
+1 = Configuration issue
+
+2 = Unable to gather all data, meaning that while creating the archive to upload, some kind of I/O related error happened. The log should give you an idea of what. Can happen when files disappear during archive creation
+
+3 = Amount of files to backup exceed the `max size` parameter and `persuasive` wasn't enabled
+
+10 = Backup was successful, but there are more files to backup. Happens if `persuasive` and `max size` is enabled and the amount of data exceeds `max size`. Running the tool again will gather any files which weren't backed up. Ideally you continue to run the tool until it returns 0
+
+255 = Generic error, see log output
+
 # What's missing?
 
-There is as of yet no way to have iceshelf retreive the backup it created and uploaded. For now you're left to use the `aws` tool itself to do that. Once you've retrieved the file(s), you can either extract it manually yourself or try the iceshelf-restore tool which is in beta. It's fairly robust and is able to deal with most circumstances. It will not, however, allow you to easily download files from glacier. It's coming later.
+There is as of yet no way to have iceshelf retreive the backup it created and uploaded. For now you're left to use the `aws` tool itself to do that. Once you've retrieved the file(s), you can either extract it manually yourself or try the [iceshelf-restore](README.iceshelf-restore.md) tool which is in beta. It's fairly robust and is able to deal with most circumstances. It will not, however, allow you to easily download files from glacier. It's coming later.
 
 # Thoughts
 
-- Is par2 usage just paranoia?
 - Better options than par2 which are open-source?
 - JSON is probably not going to cut-it in the future for local metadata storage
 
