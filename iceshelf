@@ -510,10 +510,10 @@ if cmdline.show:
   sys.exit(0)
 
 if cmdline.find:
-  logging.info("Searching for \"%s\"", cmdline.find)
+  logging.info("Searching for \"%s\"", cmdline.find.decode('utf-8'))
   found = 0
   for k,v in oldFiles.iteritems():
-    if k.lower().find(cmdline.find.lower()) is not -1:
+    if k.lower().find(cmdline.find.decode('utf-8').lower()) is not -1:
       logging.info("  \"%s\", exists in:", k)
       found += 1
       v["memberof"].sort()
