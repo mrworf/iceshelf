@@ -178,7 +178,7 @@ basepath, files = getBackupFiles(cmdline.backup)
 fileManifest = None
 fileArchive = None
 
-parity = False
+fileParity = False
 filelist = None
 oldfilelist = False
 corruptFiles = []
