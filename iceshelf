@@ -256,8 +256,8 @@ def gatherData():
         tmp2.append(k)
 
     manifest = {"modified" : tmp1, "deleted" : tmp2, "moved" : movedFiles, "previousbackup" : lastBackup}
-    with open(file_manifest, "wb") as fp:
-      json.dump(manifest, fp)
+    with open(file_manifest, "w") as fp:
+      fp.write(json.dumps(manifest, ensure_ascii=False).encode("utf-8"))
 
   # Security for the archive
   if config["encrypt"] and havearchive:
@@ -706,7 +706,7 @@ saveData = {
   "lastbackup" : config["prefix"] + config["unique"]
 }
 with open(config["file-checksum"] + "_tmp", "wb") as fp:
-  json.dump(saveData, fp)
+  fp.write(json.dumps(saveData, ensure_ascii=False).encode("utf-8"))
 
 # Copy the new file into place and then delete the temp file
 try:
