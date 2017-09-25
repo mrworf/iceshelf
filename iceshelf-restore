@@ -170,7 +170,7 @@ if config is None:
   sys.exit(1)
 
 if not os.path.isfile(cmdline.backup):
-  logging.error('"%s" is not a file' % cmdline.backup)
+  logging.error('"%s" is not a file' % cmdline.backup.decode('UTF-8'))
   sys.exit(1)
 
 basepath, files = getBackupFiles(cmdline.backup)
@@ -178,7 +178,7 @@ basepath, files = getBackupFiles(cmdline.backup)
 fileManifest = None
 fileArchive = None
 
-parity = False
+fileParity = None
 filelist = None
 oldfilelist = False
 corruptFiles = []
@@ -273,6 +273,9 @@ if cmdline.restore:
   if archive is None:
     logging.error('Unable to process "%s"' % fileArchive)
     sys.exit(1)
+else:
+    logging.info('No restore directory given. Exit.')
+    sys.exit(0)
 
 if fileManifest is None:
   logging.info('This is as much as can be done. You can now manually extract the files')
@@ -313,11 +316,11 @@ if cmdline.restore:
   with tarfile.open(archive, "r:*") as tar:
     item = tar.next()
     while item != None:
-      if '/' + item.name not in manifest['modified']:
-        logging.error('Archive contains "%s", not listed in the manifest' % item.name)
+      if '/' + item.name.decode('UTF-8') not in manifest['modified']:
+        logging.error('Archive contains "%s", not listed in the manifest' % item.name.decode('UTF-8'))
         fileerror += 1
       else:
-        manifest['modified']['/' + item.name]['found'] = True
+        manifest['modified']['/' + item.name.decode('UTF-8')]['found'] = True
         filecount -= 1
       item = tar.next()
 
@@ -362,7 +365,7 @@ if not cmdline.restore:
 with tarfile.open(archive, "r:*") as tar:
   item = tar.next()
   while item != None:
-    filename = os.path.normpath(cmdline.restore + "/" + item.name)
+    filename = os.path.normpath(cmdline.restore + "/" + item.name.decode('UTF-8'))
     logging.info('Extracting "%s" to "%s"' % (os.path.basename(filename), os.path.dirname(filename)))
     tar.extract(item, cmdline.restore)
     item = tar.next()
