@@ -1,9 +1,9 @@
-import ConfigParser
+import configparser
 import sys
 import os.path
 import logging
 import os
-import aws
+import modules.aws
 
 setting = {
   "encrypt": None,
@@ -57,7 +57,7 @@ def isCompatible(version):
     return False
 
 def parse(filename, onlysecurity=False):
-  config = ConfigParser.ConfigParser()
+  config = configparser.ConfigParser(strict=False)
   # Some sane defaults
 
   config.add_section("sources")

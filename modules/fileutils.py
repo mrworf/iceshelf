@@ -31,10 +31,10 @@ def generateParity(filename, level):
   p = Popen(cmd, stdout=PIPE, stderr=PIPE)
   out, err = p.communicate()
   if p.returncode != 0:
-    print "Command: " + repr(cmd)
-    print "Output: " + out
-    print "Error : " + err
-    print "Code  : " + str(p.returncode)
+    print("Command: " + repr(cmd))
+    print("Output: " + out)
+    print("Error : " + err)
+    print("Code  : " + str(p.returncode))
   return p.returncode == 0
 
 def repairParity(filename):
@@ -42,10 +42,10 @@ def repairParity(filename):
   p = Popen(cmd, stdout=PIPE, stderr=PIPE)
   out, err = p.communicate()
   if p.returncode != 0:
-    print "Command: " + repr(cmd)
-    print "Output: " + out
-    print "Error : " + err
-    print "Code  : " + str(p.returncode)
+    print("Command: " + repr(cmd))
+    print("Output: " + out)
+    print("Error : " + err)
+    print("Code  : " + str(p.returncode))
   else:
     # Remove the corrupt file
     if filename[-5:] == '.par2':
@@ -102,6 +102,6 @@ def sumSize(path, files):
 
 def generateFilelist(path, output):
   files = os.listdir(path)
-  with open(output, 'wb') as lst:
+  with open(output, 'w') as lst:
     for f in files:
       lst.write('{}  {}\n'.format(hashFile(os.path.join(path, f), 'sha1'), f))
