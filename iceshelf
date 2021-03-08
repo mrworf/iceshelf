@@ -230,7 +230,7 @@ def gatherData():
             tar.add(k, recursive=False)
             logging.debug('''File "%s" added''' % k);
           except IOError as e:
-            if e.errno is 2:
+            if e.errno == 2:
               logging.warning("File \"%s\" was removed after initial scan", k)
             else:
               logging.exception("Error copying file \"%s\"", k)
@@ -512,7 +512,7 @@ if cmdline.find:
   logging.info("Searching for \"%s\"", cmdline.find.decode('utf-8'))
   found = 0
   for k,v in oldFiles.items():
-    if k.lower().find(cmdline.find.decode('utf-8').lower()) is not -1:
+    if k.lower().find(cmdline.find.decode('utf-8').lower()) != -1:
       logging.info("  \"%s\", exists in:", k)
       found += 1
       v["memberof"].sort()
@@ -529,7 +529,7 @@ logging.info("Setting up the prep directory")
 try:
   os.makedirs(config["prepdir"])
 except OSError as e:
-  if e.errno is not 17:
+  if e.errno != 17:
     logging.exception("Error creating prep directory")
     raise
 

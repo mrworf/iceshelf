@@ -49,7 +49,7 @@ def isCompatible(version):
   it remains compatible.
   """
   try:
-    if len(version) is not 3:
+    if len(version) != 3:
       return False
     c = getVersion()
     return c[0] == version[0] and c[1] == version[1] and c[2] >= version[2]
@@ -188,7 +188,7 @@ def parse(filename, onlysecurity=False):
 
   if config.get("options", "max keep").isdigit():
     setting["maxkeep"] = config.getint("options", "max keep")
-  elif config.get("options", "max keep") is not "":
+  elif config.get("options", "max keep") != "":
     logging.error("Max keep should be a number or empty")
     return None
 
@@ -251,7 +251,7 @@ def parse(filename, onlysecurity=False):
       try:
         os.makedirs(setting["prepdir"])
       except OSError as e:
-        if e.errno is not 17:
+        if e.errno != 17:
           logging.exception("Cannot create preparation dir")
           return None
 
@@ -266,7 +266,7 @@ def parse(filename, onlysecurity=False):
       try:
         os.makedirs(setting["datadir"])
       except OSError as e:
-        if e.errno is not 17:
+        if e.errno != 17:
           logging.exception("Cannot create data dir")
           return None
 
@@ -281,7 +281,7 @@ def parse(filename, onlysecurity=False):
       try:
         os.makedirs(setting["donedir"])
       except OSError as e:
-        if e.errno is not 17:
+        if e.errno != 17:
           logging.exception("Cannot create done dir")
           return None
 

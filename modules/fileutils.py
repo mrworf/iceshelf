@@ -25,7 +25,7 @@ def deleteTree(tree, include_self=False):
     os.rmdir(tree)
 
 def generateParity(filename, level):
-  if level is 0:
+  if level == 0:
     return False
   cmd = ["par2", "create", "-r"+str(level), filename]
   p = Popen(cmd, stdout=PIPE, stderr=PIPE)
