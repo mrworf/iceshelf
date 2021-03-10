@@ -1,4 +1,4 @@
-import modules.helper
+import modules.helper as helper
 from subprocess import Popen, PIPE
 import logging
 import os

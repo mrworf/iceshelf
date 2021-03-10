@@ -3,7 +3,7 @@ import sys
 import os.path
 import logging
 import os
-import modules.aws
+import modules.aws as aws
 
 setting = {
   "encrypt": None,
