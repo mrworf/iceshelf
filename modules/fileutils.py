@@ -25,16 +25,16 @@ def deleteTree(tree, include_self=False):
     os.rmdir(tree)
 
 def generateParity(filename, level):
-  if level is 0:
+  if level == 0:
     return False
   cmd = ["par2", "create", "-r"+str(level), filename]
   p = Popen(cmd, stdout=PIPE, stderr=PIPE)
   out, err = p.communicate()
   if p.returncode != 0:
-    print "Command: " + repr(cmd)
-    print "Output: " + out
-    print "Error : " + err
-    print "Code  : " + str(p.returncode)
+    print("Command: " + repr(cmd))
+    print("Output: " + out)
+    print("Error : " + err)
+    print("Code  : " + str(p.returncode))
   return p.returncode == 0
 
 def repairParity(filename):
@@ -42,10 +42,10 @@ def repairParity(filename):
   p = Popen(cmd, stdout=PIPE, stderr=PIPE)
   out, err = p.communicate()
   if p.returncode != 0:
-    print "Command: " + repr(cmd)
-    print "Output: " + out
-    print "Error : " + err
-    print "Code  : " + str(p.returncode)
+    print("Command: " + repr(cmd))
+    print("Output: " + out)
+    print("Error : " + err)
+    print("Code  : " + str(p.returncode))
   else:
     # Remove the corrupt file
     if filename[-5:] == '.par2':

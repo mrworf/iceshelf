@@ -3,7 +3,7 @@
 #
 SHOWSUCCESS=true
 USER=iceshelf
-CONF=/home/${USER}/backup.conf
+CONFS=("/home/${USER}/backup.conf")
 EXEC=/home/${USER}/iceshelf/iceshelf
 
 # Allow you to override the defaults above without having to
@@ -15,40 +15,44 @@ fi
 
 ############# DO NOT CHANGE ANYTHING BELOW THIS POINT #####################
 #
-TMPLOG=$(sudo -Hu ${USER} mktemp /tmp/iceshelf.log.XXXXX)
-RET=0
+FINALRET=0
+for CONF in "${CONFS[@]}"; do
+	TMPLOG=$(sudo -Hu ${USER} mktemp /tmp/iceshelf.log.XXXXX)
+	RET=0
 
-if [ -z "$TMPLOG" ]; then
-	echo "ERROR: User ${USER} does not exist" >&2
-	exit 255
-fi
-if [ ! -f "$CONF" ]; then
-	echo "ERROR: Configuration $CONF was not found" >&2
-	exit 255
-fi
-
-# Avoid emails about stuff unless it did something
-sudo -Hu ${USER} ${EXEC} --changes --logfile $TMPLOG $CONF
-RET=$?
-if [ $RET -eq 1 ]; then
-	# Changes detected, clear old log and do a real run
-	echo -n >$TMPLOG ""
-	sudo -Hu ${USER} ${EXEC} --logfile $TMPLOG $CONF
-	RET=$?
-	if $SHOWSUCCESS && [ $RET -eq 0 ]; then
-		echo "SHOWSUCCESS is TRUE, showing result of successfull run" >&2
-		echo "======================================================" >&2
-		cat $TMPLOG >&2;
+	if [ -z "$TMPLOG" ]; then
+		echo "ERROR: User ${USER} does not exist" >&2
+		exit 255
 	fi
-fi
-if [ $RET -ne 0 ]; then
-	echo "Backup failed with error code $RET, this is what happened:" >&2
-	echo "==========================================================" >&2
-	cat $TMPLOG >&2
-fi
+	if [ ! -f "$CONF" ]; then
+		echo "ERROR: Configuration $CONF was not found" >&2
+		exit 255
+	fi
 
-# Always keep a log of all activities
-cat $TMPLOG >> /var/log/iceshelf.log
-rm $TMPLOG
+	# Avoid emails about stuff unless it did something
+	sudo -Hu ${USER} ${EXEC} --changes --logfile $TMPLOG $CONF
+	RET=$?
+	if [ $RET -eq 1 ]; then
+		# Changes detected, clear old log and do a real run
+		echo -n >$TMPLOG ""
+		sudo -Hu ${USER} ${EXEC} --logfile $TMPLOG $CONF
+		RET=$?
+		if $SHOWSUCCESS && [ $RET -eq 0 ]; then
+			echo "SHOWSUCCESS is TRUE, showing result of successfull run" >&2
+			echo "======================================================" >&2
+			cat $TMPLOG >&2;
+		fi
+	fi
+	if [ $RET -ne 0 ]; then
+		echo "Backup failed with error code $RET, this is what happened:" >&2
+		echo "==========================================================" >&2
+		cat $TMPLOG >&2
+		FINALRET=1
+	fi
 
-exit $RET
+	# Always keep a log of all activities
+	cat $TMPLOG >> /var/log/iceshelf.log
+	rm $TMPLOG
+done
+
+exit $FINALRET

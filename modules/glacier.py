@@ -1,4 +1,4 @@
-import helper
+from . import helper
 from subprocess import Popen, PIPE
 import logging
 import os

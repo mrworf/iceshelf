@@ -1,4 +1,4 @@
-import helper
+from . import helper
 from subprocess import Popen, PIPE
 import logging
 import os
@@ -13,7 +13,7 @@ import math
 import random
 
 import threading
-from Queue import Queue
+from queue import Queue
 
 def isConfigured():
   if not os.path.exists(os.path.expanduser('~/.aws/config')) or not os.path.exists(os.path.expanduser('~/.aws/credentials')):
