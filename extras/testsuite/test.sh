@@ -295,7 +295,7 @@ function runTest() {
 }
 
 function hasGPGconfig() {
-  gpg --list-keys 2>/dev/null | grep test@test.test >/dev/null 2>/dev/null
+  gpg --list-secret-keys 2>/dev/null | grep test@test.test >/dev/null 2>/dev/null
   return $?
 }
 
@@ -312,14 +312,14 @@ if hash gpg ; then
   HASKEY=false
   if ! hasGPGconfig; then
     echo "Importing test-key for test usage"
-    RESULT="$(gpg 2>&1 --fast-import test_key.*)"
+    RESULT="$(gpg 2>&1 --no-tty --batch --pinentry-mode loopback --passphrase test --fast-import test_key.*)"
     RESULT2="$(echo "010034E91082BF022DBAF1FEA00E5EDACC9D1828:6:" | gpg 2>&1 --import-ownertrust)"
-    if [ $? -eq 0 ] ; then
+    if hasGPGconfig ; then
       HASKEY=true
     else
       echo "=== ERROR: Unable to import GPG key for testing, encryption will not be tested"
-      echo "$RESULT"
-      echo "$RESULT2"
+      echo -e "Result 1:\n$RESULT"
+      echo -e "Result 2:\n$RESULT2"
       exit 255
     fi
   else
