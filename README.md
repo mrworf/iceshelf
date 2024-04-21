@@ -1,4 +1,4 @@
-# iceshelf [![Build Status](https://travis-ci.org/mrworf/iceshelf.svg?branch=master)](https://travis-ci.org/mrworf/iceshelf)
+# iceshelf [![Build Status](https://github.com/mrworf/iceshelf/actions/workflows/python-app.yml/badge.svg)](https://github.com/mrworf/iceshelf/actions/workflows/python-app.yml)
 
 A simple tool to allow storage of private, incremental backups using Amazon's Glacier storage. It uses par2, tar, bzip2, gpg, json and nice stuff like that to accomplish the job.
 
