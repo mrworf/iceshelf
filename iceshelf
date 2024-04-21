@@ -87,7 +87,23 @@ if cmdline.debug:
   loglevel=logging.DEBUG
   logformat=u'%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s'
 
-logging.basicConfig(stream=sys.stdout, filename=cmdline.logfile, level=loglevel, format=logformat)
+# Create a logger
+logger = logging.getLogger()
+logger.setLevel(loglevel)
+
+# Create a handler for stdout
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setLevel(loglevel)
+stream_handler.setFormatter(logging.Formatter(logformat))
+logger.addHandler(stream_handler)
+
+# Create a handler for the file
+if cmdline.logfile:
+  file_handler = logging.FileHandler(cmdline.logfile)
+  file_handler.setLevel(loglevel)
+  file_handler.setFormatter(logging.Formatter(logformat))
+  logger.addHandler(file_handler)
+
 logging.getLogger("gnupg").setLevel(logging.WARNING)
 logging.getLogger("shutil").setLevel(logging.WARNING)
 
@@ -171,7 +187,7 @@ def collectFile(filename):
 def collectSources(sources):
   # Time to start building a list of files
   result = {'files':[], 'size':0}
-  for name,path in sources.iteritems():
+  for name,path in sources.items():
     logging.info("Processing \"%s\" (%s)", name, path)
     if os.path.isfile(path):
       if not configuration.isExcluded(path):
@@ -185,11 +201,6 @@ def collectSources(sources):
         for f in files:
           if not configuration.isExcluded(os.path.join(root, f)):
             filename = os.path.join(root, f)
-            try:
-              filename = filename.decode("utf-8")
-            except:
-              logging.warning('Filename %s is corrupt, please rename it. Will be skipped for now' % repr(filename))
-              filename = None
 
             if filename is not None:
               if not collectFile(filename):
@@ -248,7 +259,7 @@ def gatherData():
     tmp1 = {}
     tmp2 = []
 
-    for k,v in newFiles.iteritems():
+    for k,v in newFiles.items():
       if k not in movedFiles:
         tmp1[k] = v
     for k in deletedFiles:
@@ -256,8 +267,8 @@ def gatherData():
         tmp2.append(k)
 
     manifest = {"modified" : tmp1, "deleted" : tmp2, "moved" : movedFiles, "previousbackup" : lastBackup}
-    with open(file_manifest, "w") as fp:
-      fp.write(json.dumps(manifest, ensure_ascii=False).encode("utf-8"))
+    with open(file_manifest, "w", encoding="utf-8") as fp:
+      fp.write(json.dumps(manifest, ensure_ascii=False))
 
   # Security for the archive
   if config["encrypt"] and havearchive:
@@ -457,12 +468,12 @@ if cmdline.list:
   # Find out which was the latest backup
   # Build a tree so we can sort it
   backuptree = []
-  for k,v in backupSets.iteritems():
+  for k,v in backupSets.items():
     backuptree.append(k)
   backuptree.sort()
 
   filetree = []
-  for k,v in oldFiles.iteritems():
+  for k,v in oldFiles.items():
     if v["checksum"] != "":
       if cmdline.list == "members":
         last = sorted(v["memberof"])
@@ -489,7 +500,7 @@ if cmdline.list:
 if cmdline.modified:
   found = 0
   logging.info("Searching for modified files:")
-  for k,v in oldFiles.iteritems():
+  for k,v in oldFiles.items():
     if len(v["memberof"]) > 1:
       found += 1
       logging.info("\"%s\" modified %d times", k, len(v["memberof"]))
@@ -512,7 +523,7 @@ if cmdline.show:
 if cmdline.find:
   logging.info("Searching for \"%s\"", cmdline.find.decode('utf-8'))
   found = 0
-  for k,v in oldFiles.iteritems():
+  for k,v in oldFiles.items():
     if k.lower().find(cmdline.find.decode('utf-8').lower()) != -1:
       logging.info("  \"%s\", exists in:", k)
       found += 1
@@ -547,7 +558,7 @@ will have a new file with the same checksum.
 """
 if config["detect-move"]:
   tmpRemove = []
-  for k,v in deletedFiles.iteritems():
+  for k,v in deletedFiles.items():
     item = shaFiles.get(v["checksum"])
     if item:
       for f in item:
@@ -643,7 +654,7 @@ if not backup:
 ##############################################################################
 
 # merge new files, checksums and memberships
-for k,v in newFiles.iteritems():
+for k,v in newFiles.items():
   if k in oldFiles: # Don't forget any old memberships
     newFiles[k]["memberof"] += oldFiles[k]["memberof"]
     if "deleted" in oldFiles[k]:
@@ -671,7 +682,7 @@ for f in deletedFiles:
 # We also need to handle the moved files properly to avoid marking a moved file as deleted
 # on the next run.
 
-for _new,_old in movedFiles.iteritems():
+for _new,_old in movedFiles.items():
   # Note where we got this copy from
   if _old in oldMoves:
     # Just readjust this entry

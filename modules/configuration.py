@@ -58,52 +58,60 @@ def isCompatible(version):
 
 def parse(filename, onlysecurity=False):
   config = configparser.ConfigParser()
+
   # Some sane defaults
-
-  config.add_section("sources")
-
-  config.add_section("paths")
-  config.set("paths", "prep dir", "backup/inprogress/")
-  config.set("paths", "data dir", "backup/metadata/")
-  config.set("paths", "done dir", "backup/done/")
-  config.set("paths", "prefix", "")
-  config.set("paths", "create paths", "no")
-
-  config.add_section("options")
-  config.set("options", "max size", "0")
-  config.set("options", "delta manifest", "yes")
-  config.set("options", "compress", "yes")
-  config.set("options", "incompressible", "")
-  config.set("options", "persuasive", "no")
-  config.set("options", "detect move", "no")
-  config.set("options", "skip empty", "no")
-  config.set("options", "ignore overlimit", "no")
-  config.set("options", "change method", "sha1")
-  config.set("options", "max keep", "0")
-  config.set("options", "create filelist", "yes")
-  config.set("options", "check update", "no")
-
-  config.add_section("glacier")
-  config.set("glacier", "vault", "")
-  config.set("glacier", "threads", "4")
-
-  config.add_section("custom")
-  config.set("custom", "pre command", "")
-  config.set("custom", "post command", "")
-
-  config.add_section("security")
-  config.set("security", "encrypt", "")
-  config.set("security", "sign", "")
-  config.set("security", "encrypt phrase", "")
-  config.set("security", "sign phrase", "")
-  config.set("security", "add parity", "0")
-  config.set("security", "encrypt manifest", "yes")
-
-
-
+  sections = {
+    "sources": {},
+    "paths": {
+      "prep dir": "backup/inprogress/",
+      "data dir": "backup/metadata/",
+      "done dir": "backup/done/",
+      "prefix": "",
+      "create paths": "no"
+    },
+    "options": {
+      "max size": "0",
+      "delta manifest": "yes",
+      "compress": "yes",
+      "incompressible": "",
+      "persuasive": "no",
+      "detect move": "no",
+      "skip empty": "no",
+      "ignore overlimit": "no",
+      "change method": "sha1",
+      "max keep": "0",
+      "create filelist": "yes",
+      "check update": "no"
+    },
+    "glacier": {
+      "vault": "",
+      "threads": "4"
+    },
+    "custom": {
+      "pre command": "",
+      "post command": ""
+    },
+    "security": {
+      "encrypt": "",
+      "sign": "",
+      "encrypt phrase": "",
+      "sign phrase": "",
+      "add parity": "0",
+      "encrypt manifest": "yes"
+    }
+  }
 
   # Read user settings
+  logging.debug('Loading configuration from %s', filename)
   config.read(filename)
+
+  # Load the defaults
+  for section, options in sections.items():
+    if not config.has_section(section):
+      config.add_section(section)
+    for option, value in options.items():
+      if not config.has_option(section, option):
+        config.set(section, option, value)
 
   # Validate the config
   if len(config.options("sources")) == 0 and not onlysecurity:
