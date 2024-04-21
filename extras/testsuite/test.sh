@@ -30,22 +30,69 @@ function initialize() {
   # Next folders with files
 }
 
+# Takes an INI file and ensures sections are only defined once
+#
+# Param 1: Filename of the INI file
+#
+merge_sections() {
+  local filename=$1
+  awk -F'=' '
+    /^\[.*\]$/ {
+      if (section != $0 && section) {
+        print section
+        for (key in keys) {
+          if (keys[key] != "") {
+            print key "=" keys[key]
+          } else {
+            print key
+          }
+        }
+        delete keys
+      }
+      section=$0
+      next
+    }
+    /^$/ { next }  # Skip blank lines
+    /^#/ { next }  # Skip comments
+    {
+      if ($1 in keys) {
+        next
+      } else {
+        keys[$1]=$2
+      }
+    }
+    END {
+      print section
+      for (key in keys) {
+        if (keys[key] != "") {
+          print key "=" keys[key]
+        } else {
+          print key
+        }
+      }
+    }
+  ' "$filename" > "${filename}.tmp" && mv "${filename}.tmp" "$filename"
+}
 # Creates a configuration file
 #
 # Param 1: Name of the config file, always prefixed with "config_"
-# Param 2: additional config parameters (supports escaping)
+# Param 2: sources, additional config parameters (supports escaping)
+# Param 3: paths, additional config parameters (supports escaping)
+# Param 4: options, additional config parameters (supports escaping)
+# Param 5: sections, additional config parameters (supports escaping)
 #
-# NOTE! Don't forget section when adding items!
+# NOTE! Don't forget section when using parameter 5!
 #
 function generateConfig() {
-  echo >"config_$1" -e "$2"
   cat >> "config_$1" << EOF
 [sources]
 test=content/
+$(echo -e "$2")
 [paths]
 prep dir: tmp/
 data dir: data/
 done dir: done/
+$(echo -e "$3")
 [options]
 delta manifest: yes
 compress: no
@@ -54,7 +101,13 @@ ignore overlimit: no
 incompressible:
 max keep: 0
 detect move: yes
+$(echo -e "$4")
+$(echo -e "$5")
 EOF
+
+  # Ensure sections are unique
+  merge_sections "config_$1"
+
 }
 
 function lastFolder() {
@@ -147,27 +200,29 @@ function runTest() {
     rm tmp/file.tar >/dev/null 2>/dev/null
     rm tmp/file.tar.gpg >/dev/null 2>/dev/null
     if echo "$ARCHIVE" | grep -q "gpg.sig" ; then
-      gpg -q --no-tty --no-use-agent --batch --output tmp/file.tar.gpg --decrypt "${ARCHIVE}" 2>/dev/null >/dev/null
+      GPGOUTPUT="$(gpg -q --no-tty --batch --pinentry-mode loopback --passphrase test --output tmp/file.tar.gpg --decrypt "${ARCHIVE}" 2>&1)"
       GPGERR=$?
       ARCHIVE=tmp/file.tar.gpg
     fi
     if [ $GPGERR -ne 0 ]; then
       echo "ERROR: GPG was unable to process ${ORIGINAL}"
+      echo "$GPGOUTPUT"
       return 255
     fi
 
     if echo "$ARCHIVE" | grep -q gpg ; then
-      gpg -q --no-tty --no-use-agent --batch --passphrase test --output tmp/file.tar --decrypt "${ARCHIVE}" 2>/dev/null >/dev/null
+      GPGOUTPUT="$(gpg -q --no-tty --batch --pinentry-mode loopback --passphrase test --output tmp/file.tar --decrypt "${ARCHIVE}" 2>&1)"
       GPGERR=$?
       ARCHIVE=tmp/file.tar
     elif echo "$ARCHIVE" | grep -q sig ; then
-      gpg -q --no-tty --no-use-agent --batch --output tmp/file.tar --decrypt "${ARCHIVE}" 2>/dev/null >/dev/null
+      GPGOUTPUT="$(gpg -q --no-tty --batch --pinentry-mode loopback  --passphrase test --output tmp/file.tar --decrypt "${ARCHIVE}" 2>&1)"
       GPGERR=$?
       ARCHIVE=tmp/file.tar
     fi
 
     if [ $GPGERR -ne 0 ]; then
       echo "ERROR: GPG was unable to process ${ORIGINAL}"
+      echo "$GPGOUTPUT"
       return 255
     fi
 
@@ -262,9 +317,10 @@ if hash gpg ; then
     if [ $? -eq 0 ] ; then
       HASKEY=true
     else
-      echo "=== WARNING: Unable to import GPG key for testing, encryption will not be tested"
+      echo "=== ERROR: Unable to import GPG key for testing, encryption will not be tested"
       echo "$RESULT"
       echo "$RESULT2"
+      exit 255
     fi
   else
     HASKEY=true
@@ -305,12 +361,22 @@ for VARIANT in "${VARIATIONS[@]}"; do
   echo "...Running suite using variation ${VARIANT}..."
 
   initialize
-  generateConfig regular "$EXTRAS"
-  generateConfig prefix "[options]\nprefix: prefixed-\n$EXTRAS"
-  generateConfig filelist "[options]\ncreate filelist: yes\n$EXTRAS"
-  generateConfig encryptmani "[security]\nencrypt manifest: yes\n$EXTRAS"
-  generateConfig changehash "[options]\nchange method: sha256\n$EXTRAS"
-  generateConfig maxsize "[options]\nmax size: 1\n$EXTRAS"
+
+  # Param 1: Name of the config file, always prefixed with "config_"
+  # Param 2: sources, additional config parameters (supports escaping)
+  # Param 3: paths, additional config parameters (supports escaping)
+  # Param 4: options, additional config parameters (supports escaping)
+  # Param 5: sections, additional config parameters (supports escaping)
+  #
+  # NOTE! Don't forget section when using parameter 5!
+
+
+  generateConfig regular     '' '' '' "$EXTRAS"
+  generateConfig prefix      '' '' "prefix: prefixed-\n" "$EXTRAS"
+  generateConfig filelist    '' '' "create filelist: yes\n" "$EXTRAS"
+  generateConfig encryptmani '' '' '' "[security]\nencrypt manifest: yes\n$EXTRAS"
+  generateConfig changehash  '' '' "change method: sha256\n" "$EXTRAS"
+  generateConfig maxsize     '' '' "max size: 1\n" "$EXTRAS"
 
   # First, make sure NO test uses the same case-number, that's an AUTO FAIL!
   ALL_CASES="$(ls -1 tests/ | wc --lines)"
