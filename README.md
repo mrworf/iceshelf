@@ -1,6 +1,19 @@
 # iceshelf [![Build Status](https://github.com/mrworf/iceshelf/actions/workflows/python-app.yml/badge.svg)](https://github.com/mrworf/iceshelf/actions/workflows/python-app.yml)
 
-A simple tool to allow storage of private, incremental backups using Amazon's Glacier storage. It uses par2, tar, bzip2, gpg, json and nice stuff like that to accomplish the job.
+This tool allow you to backup data, it's intended to be used with services that store such data in an immutable state. This means, for backing up data which is changing on a daily basis, this isn't the tool since it would generate a lot of data.
+
+The design goal for this backup was to leverage known tools and standards, allowing recovery of data, even if you don't have access to iceshelf, a viable option.
+
+To that end, this tool uses
+- par2
+- tar
+- bzip2
+- gpg
+- json
+
+All of these will allow you restore backups even if you don't have this tool anymore.
+
+If used with immutable storage, then it also provides protection against ransomware.
 
 # Features
 
@@ -11,14 +24,12 @@ A simple tool to allow storage of private, incremental backups using Amazon's Gl
 - Primarily designed for AWS Glacier but can be used with other services
 - Tracks backups locally to help locate the file needed to restore
 - Keeps the exact directory structure of the backed up files
-- Most features can be turned on/off and customized
 - Provides paper-based GPG key backup/restore solution
+- Most features can be turned on/off and customized
 
-Due to the need to work well with Glacier, any change to a file will cause it
-to reupload the same file (with the new content). This backup solution is not
-meant to be used on files which change often.
+Due to the need to work well with immutable storage (in this case, specifically AWS Glacier), any change to a file will cause it to reupload the same file (with the new content). For this reason, this tool isn't recommended to use with data sources which changes a lot since it will produce a tremendous amount of data over time.
 
-It's an archiving solution for long-term storage which is what Glacier excels
+This is an archiving solution for long-term storage which is what Glacier excels
 at. Also the reason it's called iceshelf. To quote from wikipedia:
 
 > An ice shelf is a thick floating platform of ice that forms where a glacier or ice sheet flows down to a coastline and onto the ocean surface
@@ -413,7 +424,7 @@ Depending on what happened during the run, iceshelf will return the following ex
 
 # What's missing?
 
-There is as of yet no way to have iceshelf retreive the backup it created and uploaded. For now you're left to use the `aws` tool itself to do that. Once you've retrieved the file(s), you can either extract it manually yourself or try the [iceshelf-restore](README.iceshelf-restore.md) tool which is in beta. It's fairly robust and is able to deal with most circumstances. It will not, however, allow you to easily download files from glacier. It's coming later.
+There is as of yet no way to have iceshelf retreive the backup it created and uploaded. For now you're left to use the `aws` tool itself to do that. Once you've retrieved the file(s), you can either extract it manually yourself or try the [iceshelf-restore](README.iceshelf-restore.md) tool which is in beta. It's fairly robust and is able to deal with most circumstances. It will not, however, allow you to easily download files from glacier. 
 
 # Thoughts
 
