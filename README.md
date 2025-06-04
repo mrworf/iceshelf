@@ -77,7 +77,7 @@ In order to be able to run this, you need a few other parts installed.
 
 - OpenPGP / GNU Privacy Guard (typically referred to as `gpg`)
 - python-gnupg - Encryption & Signature (NOT `gnupg`, it's `python-gnupg`)
-  Ubuntu comes with a version, but unfortunately it's too old. You should install this using the `pip` tool to make sure you get a current version.
+  Ubuntu comes with a version, but unfortunately it's too old. You should install this using the `pip3` tool to make sure you get a current version.
 - par2 - Parity tool
 - aws - In order to upload archive to glacier
 
@@ -87,11 +87,11 @@ This is the simple version which points out what commands to run. Please conside
 
 1. GPG
   Easy enough, ubuntu comes with it pre-installed
-2. GnuPG (requires PIP)
+2. GnuPG (requires pip3)
   ```
-  sudo apt-get install python-dev
-  sudo apt-get install python-pip
-  sudo pip install python-gnupg
+  sudo apt-get install python3-dev
+  sudo apt-get install python3-pip
+  sudo -H pip3 install python-gnupg
   ```
 
 3. PAR2 for parity
@@ -440,7 +440,7 @@ This is caused by your system clock being off by more than 5 minutes. It's highl
 ## When I run the tool, it says "Current GnuPG python module does not support file encryption, please check FAQ section in documentation"
 
 Unfortunately, there is both a gnupg and a python-gnupg implementation. This tool relies on the latter. If you get this error, then you've installed the `gnupg` version instead of `python-gnupg`.
-To fix this, please uninstall the wrong one using either the package manager or `sudo pip uninstall gnupg` followed by the correct one `sudo pip install python-gnupg`
+To fix this, please uninstall the wrong one using either the package manager or `sudo pip3 uninstall gnupg` followed by the correct one `sudo -H pip3 install python-gnupg`
 
 ## I get "Filename '&lt;some file&gt;' is corrupt, please rename it. Will be skipped for now" warnings
 
