@@ -13,7 +13,7 @@ Environment="ICESHELF=/home/iceshelf/iceshelf/iceshelf"
 Environment="CONFIG=/home/iceshelf/backup.conf"
 
 Type=simple
-ExecStart=/usr/bin/python ${ICESHELF} ${CONFIG}
+ExecStart=/usr/bin/python3 ${ICESHELF} ${CONFIG}
 
 # Restart if not finished
 RestartForceExitStatus=10
