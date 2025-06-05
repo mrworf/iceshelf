@@ -13,7 +13,7 @@ import math
 import random
 
 import threading
-from queue import Queue
+from queue import Queue, Empty
 
 def isConfigured():
   if not os.path.exists(os.path.expanduser('~/.aws/config')) or not os.path.exists(os.path.expanduser('~/.aws/credentials')):
@@ -86,7 +86,10 @@ class uploadCoordinator:
     while run and not self.exit:
       try:
         entry = self.queue.get(False)
-      except:
+      except Empty:
+        break
+      except Exception:
+        logging.exception('Failed to read from queue')
         break
       sent = entry.work()
       if sent == -1:
@@ -346,8 +349,8 @@ def awsCommand(config, args, dry=False):
   jout = None
   try:
     jout = json.loads(out)
-  except:
-    pass
+  except ValueError as e:
+    logging.debug('Failed to parse AWS output as JSON: %s', e)
 
   if out is None or out == "":
     logging.debug("Error : " + repr(err))

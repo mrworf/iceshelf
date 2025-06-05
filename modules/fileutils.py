@@ -31,10 +31,10 @@ def generateParity(filename, level):
   p = Popen(cmd, stdout=PIPE, stderr=PIPE)
   out, err = p.communicate()
   if p.returncode != 0:
-    print("Command: " + repr(cmd))
-    print("Output: " + out)
-    print("Error : " + err)
-    print("Code  : " + str(p.returncode))
+    logging.error("Command: %s", repr(cmd))
+    logging.error("Output: %s", out)
+    logging.error("Error : %s", err)
+    logging.error("Code  : %s", str(p.returncode))
   return p.returncode == 0
 
 def repairParity(filename):

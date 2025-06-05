@@ -24,8 +24,159 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #
-#################################################################################
+################################################################################
 
+def create_archive(base):
+  mode = "w"
+  archive = base + ".tar"
+  if config["compress"] and currentOp["filesize"] > 0:
+    if config["compress-force"] or shouldCompress():
+      mode = "w|bz2"
+      archive += ".bz2"
+    else:
+      logging.info(
+        "Content is not likely to compress (%d%% chance), skipping compression.",
+        shouldCompress())
+  logging.info(
+    "Preparing content for archiving, may take quite a while depending on size")
+  with tarfile.open(archive, mode) as tar:
+    tar.dereference = True
+    for k in newFiles:
+      if k not in movedFiles:
+        try:
+          tar.add(k, recursive=False)
+          logging.debug('File "%s" added' % k)
+        except IOError as e:
+          if e.errno == 2:
+            logging.warning("File \"%s\" was removed after initial scan", k)
+          else:
+            logging.exception("Error copying file \"%s\"", k)
+            raise
+  return archive
+
+
+def create_manifest(path):
+  tmp1 = {}
+  tmp2 = []
+  for k, v in newFiles.items():
+    if k not in movedFiles:
+      tmp1[k] = v
+  for k in deletedFiles:
+    if k not in movedFiles.values():
+      tmp2.append(k)
+  manifest = {
+    "modified": tmp1,
+    "deleted": tmp2,
+    "moved": movedFiles,
+    "previousbackup": lastBackup,
+  }
+  with open(path, "w", encoding="utf-8") as fp:
+    fp.write(json.dumps(manifest, ensure_ascii=False))
+  return path
+
+
+def encrypt_file(path, gpg, armor=False):
+  with open(path, "rb") as fp:
+    gpg.encrypt_file(
+      fp,
+      config["encrypt"],
+      passphrase=config["encrypt-pw"],
+      armor=armor,
+      output=path + ".gpg",
+    )
+  if not os.path.exists(path + ".gpg"):
+    logging.error(
+      "GnuPG didn't produce an encrypted file. Please make sure GnuPG is installed and running properly")
+    return None
+  os.remove(path)
+  return path + ".gpg"
+
+
+def sign_file(path, gpg, binary=False):
+  with open(path, "rb") as fp:
+    gpg.sign_file(
+      fp,
+      keyid=config["sign"],
+      passphrase=config["sign-pw"],
+      binary=binary,
+      clearsign=False,
+      output=path + (".sig" if binary else ".asc"),
+    )
+  outfile = path + (".sig" if binary else ".asc")
+  if not os.path.exists(outfile):
+    logging.error(
+      "GnuPG didn't produce a signed file. Please make sure GnuPG is installed and running properly")
+    return None
+  os.remove(path)
+  return outfile
+
+
+def add_parity(path):
+  logging.info("Generating %d%% parity information", config['parity'])
+  return fileutils.generateParity(path, config["parity"])
+
+
+def gatherData():
+  base = os.path.join(config["prepdir"], config["prefix"] + config["unique"])
+  file_archive = None
+  file_manifest = base + ".json"
+  gpg = gnupg.GPG(options=['-z', '0'])
+
+  havearchive = False
+  if len(newFiles) - len(movedFiles):
+    file_archive = create_archive(base)
+    havearchive = True
+  else:
+    if len(movedFiles):
+      logging.info("No files to save, only metadata changes, skipping archive")
+    else:
+      logging.info("No files to save, skipping archive")
+
+  if config["manifest"]:
+    file_manifest = create_manifest(file_manifest)
+
+  if config["encrypt"] and havearchive:
+    file_archive = encrypt_file(file_archive, gpg, armor=False)
+    if file_archive is None:
+      return None
+  if config["sign"] and havearchive:
+    file_archive = sign_file(file_archive, gpg, binary=True)
+    if file_archive is None:
+      return None
+
+  if havearchive and config["parity"] > 0:
+    if not add_parity(file_archive):
+      logging.error("Unable to create PAR2 file for this archive")
+      return None
+
+  if config["encrypt"] and config["encrypt-manifest"] and config["manifest"]:
+    file_manifest = encrypt_file(file_manifest, gpg, armor=True)
+    if file_manifest is None:
+      return None
+
+  if config["sign"]:
+    if config["manifest"]:
+      file_manifest = sign_file(file_manifest, gpg)
+      if file_manifest is None:
+        return None
+    if config["parity"] > 0:
+      logging.info("Signing parity")
+      for f in os.listdir(config["prepdir"]):
+        if f.endswith('.par2'):
+          f = os.path.join(config["prepdir"], f)
+          signed = sign_file(f, gpg, binary=True)
+          if signed is None:
+            return None
+
+  if config["create-filelist"]:
+    file_list = base + ".lst"
+    fileutils.generateFilelist(config["prepdir"], file_list)
+    if config["sign"]:
+      signed = sign_file(file_list, gpg)
+      if signed is None:
+        return None
+
+  return os.listdir(config["prepdir"])
 import logging
 import argparse
 import sys
@@ -139,8 +290,8 @@ def checkNewVersion():
           line = line.strip()
           if line != "":
             logging.info("+++ " + line)
-  except:
-    pass
+  except Exception:
+    logging.exception('Failed to check for new version')
 
 def shouldCompress():
   if currentOp["filesize"] == 0:
@@ -216,179 +367,6 @@ def collectSources(sources):
   return result
 
 
-def gatherData():
-  mode = "w"
-  file_archive = os.path.join(config["prepdir"], config["prefix"] + config["unique"]) + ".tar"
-  file_manifest = os.path.join(config["prepdir"], config["prefix"] + config["unique"]) + ".json"
-  gpg = gnupg.GPG(options=['-z', '0']) # Do not use GPG compression since we use bzip2
-
-  havearchive = False
-  if (len(newFiles) - len(movedFiles)):
-    # Don't bother compressing if we have no data
-    if config["compress"] and currentOp["filesize"] > 0:
-      if config["compress-force"] or shouldCompress():
-        mode = "w|bz2"
-        file_archive += ".bz2"
-      else:
-        logging.info("Content is not likely to compress (%d%% chance), skipping compression.", shouldCompress())
-
-    # Copy the files...
-    logging.info("Preparing content for archving, may take quite a while depending on size")
-    with tarfile.open(file_archive, "w") as tar:
-      tar.dereference = True
-      for k in newFiles:
-        if k not in movedFiles:
-          try:
-            tar.add(k, recursive=False)
-            logging.debug('''File "%s" added''' % k);
-          except IOError as e:
-            if e.errno == 2:
-              logging.warning("File \"%s\" was removed after initial scan", k)
-            else:
-              logging.exception("Error copying file \"%s\"", k)
-              raise
-    havearchive = True
-  else:
-    if len(movedFiles):
-      logging.info("No files to save, only metadata changes, skipping archive")
-    else:
-      logging.info("No files to save, skipping archive")
-
-  # Produce the manifest
-  if config["manifest"]:
-    tmp1 = {}
-    tmp2 = []
-
-    for k,v in newFiles.items():
-      if k not in movedFiles:
-        tmp1[k] = v
-    for k in deletedFiles:
-      if k not in movedFiles.values():
-        tmp2.append(k)
-
-    manifest = {"modified" : tmp1, "deleted" : tmp2, "moved" : movedFiles, "previousbackup" : lastBackup}
-    with open(file_manifest, "w", encoding="utf-8") as fp:
-      fp.write(json.dumps(manifest, ensure_ascii=False))
-
-  # Security for the archive
-  if config["encrypt"] and havearchive:
-    logging.info("Encrypting archive")
-    with open(file_archive, 'rb') as fp:
-      gpg.encrypt_file(
-        fp,
-        config["encrypt"],
-        passphrase=config["encrypt-pw"],
-        armor=False,
-        output=file_archive+".gpg"
-      )
-    if not os.path.exists(file_archive + ".gpg"):
-      logging.error("GnuPG didn't produce an encrypted file. Please make sure GnuPG is installed and running properly")
-      return None
-    # Remove old content
-    os.remove(file_archive)
-    file_archive += ".gpg"
-  if config["sign"] and havearchive:
-    logging.info("Signing archive")
-    with open(file_archive, 'rb') as fp:
-      gpg.sign_file(
-        fp,
-        keyid=config["sign"],
-        passphrase=config["sign-pw"],
-        binary=True,
-        clearsign=False,
-        output=file_archive+".sig"
-      )
-    if not os.path.exists(file_archive + ".sig"):
-      logging.error("GnuPG didn't produce a signed file. Please make sure GnuPG is installed and running properly")
-      return None
-    # Remove old content
-    os.remove(file_archive)
-    file_archive += ".sig"
-
-  # Add parity if requested
-  if havearchive:
-    if config["parity"] > 0:
-      logging.info("Generating %d%% parity information", config['parity'])
-      if not fileutils.generateParity(file_archive, config["parity"]):
-        logging.error("Unable to create PAR2 file for this archive")
-        return None
-
-  # Security for all companion files...
-  if config["encrypt"] and config["encrypt-manifest"] and config["manifest"]:
-    # User wants manifest encrypted too
-    logging.info("Encrypting manifest")
-    with open(file_manifest, 'rb') as fp:
-      gpg.encrypt_file(
-        fp,
-        config["encrypt"],
-        passphrase=config["encrypt-pw"],
-        armor=True,
-        output=file_manifest+".gpg"
-      )
-    if not os.path.exists(file_manifest + ".gpg"):
-      logging.error("GnuPG didn't produce an encrypted file. Please make sure GnuPG is installed and running properly")
-      return None
-    # Remove old content
-    os.remove(file_manifest)
-    file_manifest += ".gpg"
-
-  if config["sign"]:
-    if config["manifest"]:
-      logging.info("Signing manifest")
-      with open(file_manifest, 'rb') as fp:
-        gpg.sign_file(
-          fp,
-          keyid=config["sign"],
-          passphrase=config["sign-pw"],
-          clearsign=False,
-          output=file_manifest+".asc"
-        )
-      if not os.path.exists(file_manifest + ".asc"):
-        logging.error("GnuPG didn't produce a signed file. Please make sure GnuPG is installed and running properly")
-        return None
-      # Remove old content
-      os.remove(file_manifest)
-      file_manifest += ".asc"
-    if config["parity"] > 0:
-      logging.info("Signing parity")
-      for f in os.listdir(config["prepdir"]):
-        if f.endswith('.par2'):
-          f = os.path.join(config["prepdir"], f)
-          with open(f, 'rb') as fp:
-            data = gpg.sign_file(
-              fp,
-              keyid=config["sign"],
-              passphrase=config["sign-pw"],
-              binary=True,
-              clearsign=False,
-              output=f+".sig"
-            )
-          if not os.path.exists(f + ".sig"):
-            logging.error("GnuPG didn't produce a signed file. Please make sure GnuPG is installed and running properly")
-            return None
-          # Remove old content
-          os.remove(f)
-  if config["create-filelist"]:
-    file_list = os.path.join(config["prepdir"], config["prefix"] + config["unique"]) + ".lst"
-    fileutils.generateFilelist(config["prepdir"], file_list)
-    if config["sign"]:
-      logging.info("Signing filelist")
-      with open(file_list, 'rb') as fp:
-        gpg.sign_file(
-          fp,
-          keyid=config["sign"],
-          passphrase=config["sign-pw"],
-          clearsign=False,
-          output=file_list+".asc"
-        )
-      if not os.path.exists(file_list + ".asc"):
-        logging.error("GnuPG didn't produce a signed file. Please make sure GnuPG is installed and running properly")
-        return None
-      # Remove old content
-      os.remove(file_list)
-      file_list += ".asc"
-
-  return os.listdir(config["prepdir"])
 
 #####################
 
