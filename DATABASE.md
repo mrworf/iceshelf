@@ -3,7 +3,8 @@ Structure of the JSON database:
 {
   "dataset" : {...},
   "backups" : {...},
-  "vault"   : "<name of the vault used>",
+"vault"   : "<name of the vault used>",
+"storage" : ["<provider-id>", ...],  // destinations used for this backup
   "version" : [major, minor, revision],
   "moved" : {...} (optional),
   "lastbackup" : "<name of the previous successful backup>"
