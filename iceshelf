@@ -192,8 +192,6 @@ from subprocess import Popen, PIPE
 import modules.configuration as configuration
 import modules.fileutils as fileutils
 import modules.helper as helper
-import modules.glacier as glacier
-import modules.aws as aws
 import modules.providers as providers
 
 lastBackup = None

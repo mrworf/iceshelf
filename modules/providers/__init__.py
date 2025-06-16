@@ -19,13 +19,14 @@ class BackupProvider:
 def _which(program):
     return shutil.which(program)
 
-from . import sftp, s3, scp, copy
+from . import sftp, s3, scp, copy, glacier
 
 PROVIDERS = {
     'sftp': sftp.SFTPProvider,
     's3': s3.S3Provider,
     'scp': scp.SCPProvider,
     'cp': copy.CopyProvider,
+    'glacier': glacier.GlacierProvider,
 }
 
 def get_provider(cfg):

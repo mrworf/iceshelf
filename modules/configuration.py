@@ -314,6 +314,11 @@ def parse(filename, onlysecurity=False):
     if 'type' not in provider_cfg:
       logging.error('Provider section must contain a type option')
       return None
+    if provider_cfg.get('type', '').lower() == 'glacier' and config.has_section('glacier'):
+      if config.has_option('glacier', 'vault') and config.get('glacier', 'vault') != '':
+        provider_cfg.setdefault('vault', config.get('glacier', 'vault'))
+      if config.has_option('glacier', 'threads') and config.get('glacier', 'threads') != '':
+        provider_cfg.setdefault('threads', config.get('glacier', 'threads'))
     setting["provider"] = provider_cfg
   else:
     logging.error('Configuration missing provider section')
