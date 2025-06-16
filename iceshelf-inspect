@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+import json
+import argparse
+import os
+from datetime import datetime
+
+
+def load_database(filename):
+  with open(filename, 'r', encoding='utf-8') as f:
+    return json.load(f)
+
+
+def list_directory(data, path, recurse=False):
+  path = path.rstrip('/') + '/'
+  for fname in sorted(data['dataset'].keys()):
+    if fname.startswith(path):
+      rel = fname[len(path):]
+      if recurse or '/' not in rel:
+        print(fname)
+
+
+def find_files(data, query):
+  query = query.lower()
+  for fname in sorted(data['dataset'].keys()):
+    if query in fname.lower():
+      print(fname)
+      print('  backups:', ', '.join(sorted(data['dataset'][fname]['memberof'])))
+
+
+def file_info(data, filenames):
+  for filename in filenames:
+    item = data['dataset'].get(filename)
+    if not item:
+      print(f'{filename}: No such file in database')
+      continue
+    print('File:', filename)
+    print('  checksum:', item['checksum'])
+    print('  backups:', ', '.join(sorted(item['memberof'])))
+    if item.get('deleted'):
+      print('  deleted in:', ', '.join(sorted(item['deleted'])))
+    moved_to = [n for n, v in data.get('moved', {}).items() if v['original'] == filename]
+    if moved_to:
+      for n in moved_to:
+        print('  moved to:', n, 'in', data['moved'][n]['reference'])
+    if filename in data.get('moved', {}):
+      info = data['moved'][filename]
+      print('  moved from:', info['original'], 'in', info['reference'])
+
+
+def stats(data):
+  print('Backups:', len(data.get('backups', {})))
+  print('Files   :', len(data.get('dataset', {})))
+  if 'timestamp' in data:
+    ts = datetime.fromtimestamp(data['timestamp'])
+    print('Timestamp:', ts.isoformat())
+  if 'lastbackup' in data:
+    print('Last backup:', data['lastbackup'])
+  print('Moved entries:', len(data.get('moved', {})))
+
+
+def main():
+  p = argparse.ArgumentParser(description='Inspect iceshelf database')
+  p.add_argument('database', help='checksum.json to inspect')
+  sub = p.add_subparsers(dest='cmd')
+
+  f_find = sub.add_parser('find', help='Search for files')
+  f_find.add_argument('query')
+
+  f_list = sub.add_parser('list', help='List directory contents')
+  f_list.add_argument('path')
+  f_list.add_argument('-r', '--recurse', action='store_true')
+
+  f_file = sub.add_parser('file', help='Show file details')
+  f_file.add_argument('paths', nargs='+')
+
+  sub.add_parser('stats', help='Show statistics')
+
+  args = p.parse_args()
+  data = load_database(args.database)
+
+  if args.cmd == 'find':
+    find_files(data, args.query)
+  elif args.cmd == 'list':
+    list_directory(data, args.path, args.recurse)
+  elif args.cmd == 'file':
+    file_info(data, args.paths)
+  elif args.cmd == 'stats':
+    stats(data)
+  else:
+    p.print_help()
+
+
+if __name__ == '__main__':
+  main()
