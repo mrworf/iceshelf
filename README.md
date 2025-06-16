@@ -21,7 +21,7 @@ If used with immutable storage, then it also provides protection against ransomw
 - Signs all files it uploads (tamper detection)
 - Can upload separate PAR2 file for parity correction (allows for a certain amount of bitrot)
 - Supports segmentation of upload (but not of files, yet)
-- Primarily designed for AWS Glacier but can be used with other services
+- Pluggable provider system supporting S3, SFTP, SCP and local copy
 - Tracks backups locally to help locate the file needed to restore
 - Keeps the exact directory structure of the backed up files
 - Provides paper-based GPG key backup/restore solution

@@ -194,6 +194,7 @@ import modules.fileutils as fileutils
 import modules.helper as helper
 import modules.glacier as glacier
 import modules.aws as aws
+import modules.providers as providers
 
 lastBackup = None
 oldMoves = {}
@@ -408,6 +409,12 @@ tm = datetime.utcnow()
 config["unique"] = "%d%02d%02d-%02d%02d%02d-%05x" % (tm.year, tm.month, tm.day, tm.hour, tm.minute, tm.second, tm.microsecond)
 config["archivedir"] = os.path.join(config["prepdir"], config["unique"])
 
+# Instantiate backup provider
+provider = providers.get_provider(config.get("provider"))
+if provider is None:
+  logging.error("Invalid provider configuration")
+  sys.exit(1)
+
 """
 Load the old data, containing checksums and backup sets
 """
@@ -613,20 +620,9 @@ logging.info(msg)
 
 # We want to avoid wasting requests, so only try to
 # create vaults if we need to.
-backup = False
-if config["glacier-vault"] is not None:
-  if config["glacier-vault"] != oldVault:
-    logging.info("Glacier vault most likely not in cloud, let's create it")
-    if aws.createVault(config):
-      backup = aws.uploadFiles(config, files, totalbytes)
-  else:
-    backup = aws.uploadFiles(config, files, totalbytes)
-else:
-  logging.info("Not uploading to Glacier since config is missing")
-  backup = True
-
+backup = provider.upload_files([os.path.join(config["prepdir"], f) for f in files])
 if not backup:
-  logging.error("Amazon Glacier upload failed, aborting")
+  logging.error("Backup provider failed to store files")
   sys.exit(1)
 
 #

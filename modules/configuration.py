@@ -83,6 +83,10 @@ def parse(filename, onlysecurity=False):
       "create filelist": "yes",
       "check update": "no"
     },
+    "provider": {
+      "type": "cp",
+      "dest": "backup/done/"
+    },
     "glacier": {
       "vault": "",
       "threads": "4"
@@ -302,6 +306,18 @@ def parse(filename, onlysecurity=False):
       logging.error("Source \"%s\" points to a non-existing entry \"%s\"", x, config.get("sources", x))
       return None
     setting["sources"][x] = config.get("sources", x)
+
+  # Provider options
+  setting["provider"] = None
+  if config.has_section("provider"):
+    provider_cfg = {k: v for k, v in config.items("provider")}
+    if 'type' not in provider_cfg:
+      logging.error('Provider section must contain a type option')
+      return None
+    setting["provider"] = provider_cfg
+  else:
+    logging.error('Configuration missing provider section')
+    return None
 
   # Glacier options
   if config.has_section("glacier"):
