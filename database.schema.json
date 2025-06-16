@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "IceShelf Database",
+  "type": "object",
+  "required": ["dataset", "backups", "vault", "version", "timestamp"],
+  "properties": {
+    "dataset": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["checksum", "memberof", "deleted"],
+        "properties": {
+          "checksum": {"type": "string"},
+          "memberof": {"type": "array", "items": {"type": "string"}},
+          "deleted": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "backups": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {"type": "string"}
+      }
+    },
+    "vault": {"type": "string"},
+    "version": {
+      "type": "array",
+      "items": {"type": "integer"},
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "moved": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["reference", "original"],
+        "properties": {
+          "reference": {"type": "string"},
+          "original": {"type": "string"}
+        }
+      }
+    },
+    "lastbackup": {"type": "string"},
+    "timestamp": {"type": "number"}
+  }
+}
