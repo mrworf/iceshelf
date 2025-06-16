@@ -341,9 +341,9 @@ for f in manifest['deleted']:
     logging.info('Manifest: Deleting "%s"' % src)
   if cmdline.restore:
     try:
-      os.unlink(src);
-    except:
-      logging.warn('Unable to remove "%s"' % src)
+      os.unlink(src)
+    except OSError as e:
+      logging.warning('Unable to remove "%s": %s', src, e)
 
 for k in manifest['moved']:
   v = manifest['moved'][k]
@@ -354,8 +354,8 @@ for k in manifest['moved']:
   if cmdline.restore:
     try:
       os.rename(src, dst)
-    except:
-      logging.warn('Unable to move "%s" to "%s"' % (src, dst))
+    except OSError as e:
+      logging.warning('Unable to move "%s" to "%s": %s', src, dst, e)
 
 # Finally, if not a dryrun
 if not cmdline.restore:
