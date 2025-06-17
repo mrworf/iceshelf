@@ -1,0 +1,311 @@
+#!/usr/bin/env python3
+"""Iceshelf Retrieve - fetch backups from AWS Glacier.
+
+This tool downloads files created by `iceshelf` that were stored in an AWS
+Glacier vault. Because Glacier retrievals are asynchronous, the tool keeps
+track of in-progress jobs and can be re-run to continue where it left off.
+"""
+
+import argparse
+import logging
+import json
+import os
+import re
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+import boto3
+
+import modules.aws as aws
+
+
+STATE_VERSION = 1
+
+
+def ensure_inventory(client, vault, datadir):
+    """Ensure a recent inventory is available.
+
+    Returns a dictionary mapping archive description to information or None if
+    the inventory is still being prepared.
+    """
+    inv_file = os.path.join(datadir, "glacier_inventory.json")
+    job_file = os.path.join(datadir, "glacier_inventory.job")
+
+    if os.path.exists(inv_file):
+        with open(inv_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        mapping = {}
+        for a in data.get("ArchiveList", []):
+            mapping[a.get("ArchiveDescription")] = {
+                "archiveId": a.get("ArchiveId"),
+                "size": a.get("Size"),
+                "checksum": a.get("SHA256TreeHash"),
+            }
+        return mapping
+
+    if os.path.exists(job_file):
+        with open(job_file, "r", encoding="utf-8") as f:
+            job_id = f.read().strip()
+        logging.info("Checking status of inventory job %s", job_id)
+        status = client.describe_job(vaultName=vault, jobId=job_id)
+        if not status.get("Completed"):
+            logging.info("Inventory job not ready yet. Please rerun later.")
+            return None
+        logging.info("Downloading inventory ...")
+        out = client.get_job_output(vaultName=vault, jobId=job_id)
+        body = out["body"].read()
+        with open(inv_file, "wb") as f:
+            f.write(body)
+        os.remove(job_file)
+        data = json.loads(body.decode("utf-8"))
+        mapping = {}
+        for a in data.get("ArchiveList", []):
+            mapping[a.get("ArchiveDescription")] = {
+                "archiveId": a.get("ArchiveId"),
+                "size": a.get("Size"),
+                "checksum": a.get("SHA256TreeHash"),
+            }
+        return mapping
+
+    # No job running, start one
+    logging.info("Starting inventory retrieval job ...")
+    resp = client.initiate_job(
+        vaultName=vault,
+        jobParameters={"Type": "inventory-retrieval"},
+    )
+    with open(job_file, "w", encoding="utf-8") as f:
+        f.write(resp["jobId"])
+    logging.info(
+        "Inventory retrieval job %s started. Rerun the tool once it completes.",
+        resp["jobId"],
+    )
+    return None
+
+
+def load_state(path):
+    if not os.path.exists(path):
+        return {"version": STATE_VERSION, "files": {}}
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_state(path, state):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+    os.replace(tmp, path)
+
+
+def request_job(client, vault, entry):
+    resp = client.initiate_job(
+        vaultName=vault,
+        jobParameters={
+            "Type": "archive-retrieval",
+            "ArchiveId": entry["archiveId"],
+            "Description": entry["name"],
+        },
+    )
+    entry["jobId"] = resp["jobId"]
+    entry["status"] = "requested"
+    logging.info("Requested retrieval of %s (job %s)", entry["name"], entry["jobId"])
+
+
+def check_job(client, vault, entry):
+    info = client.describe_job(vaultName=vault, jobId=entry["jobId"])
+    if not info.get("Completed"):
+        logging.info("%s not ready yet", entry["name"])
+        return False
+    entry["status"] = "ready"
+    return True
+
+
+def download_job(client, vault, entry, destdir):
+    dest = os.path.join(destdir, entry["name"])
+    logging.info("Downloading %s", entry["name"])
+    start = time.time()
+    out = client.get_job_output(vaultName=vault, jobId=entry["jobId"])
+    with open(dest, "wb") as f:
+        while True:
+            chunk = out["body"].read(1024 * 1024)
+            if not chunk:
+                break
+            f.write(chunk)
+            if sys.stdout.isatty():
+                done = f.tell()
+                total = entry.get("size", 0)
+                speed = done / max(time.time() - start, 1)
+                sys.stdout.write(
+                    "%s: %s/%s @ %s\r"
+                    % (
+                        entry["name"],
+                        aws.helper.formatSize(done),
+                        aws.helper.formatSize(total),
+                        aws.helper.formatSpeed(speed),
+                    )
+                )
+                sys.stdout.flush()
+    if sys.stdout.isatty():
+        sys.stdout.write("\n")
+
+    checksum = aws.hashFile(dest, 1024 ** 2)["final"].hexdigest()
+    expected = entry.get("checksum") or out.get("checksum")
+    if expected and checksum != expected:
+        logging.error("Checksum mismatch for %s", entry["name"])
+        entry["status"] = "pending"
+        entry["jobId"] = None
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        return
+
+    entry["status"] = "done"
+    entry["jobId"] = None
+    logging.info("Finished %s", entry["name"])
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Iceshelf Retrieve - Download backups from Glacier",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("vault", help="Name of the Glacier vault")
+    parser.add_argument(
+        "backup",
+        nargs="*",
+        metavar="BACKUP",
+        help="One or more backup identifiers to retrieve",
+    )
+    parser.add_argument(
+        "--database",
+        default="backup/metadata/checksum.json",
+        help="Path to checksum.json database",
+    )
+    parser.add_argument("--all", action="store_true", default=False, help="Retrieve all backups")
+    parser.add_argument(
+        "--dest",
+        default="retrieved",
+        help="Destination directory for downloaded files",
+    )
+    parser.add_argument(
+        "--threads", type=int, default=2, help="Number of parallel downloads"
+    )
+    parser.add_argument("--logfile", metavar="FILE", help="Log to file instead of stdout")
+    parser.add_argument(
+        "--debug", action="store_true", default=False, help="Enable debug logging"
+    )
+    args = parser.parse_args()
+
+    if not args.all and not args.backup:
+        parser.error("Specify BACKUP or --all")
+
+    loglevel = logging.DEBUG if args.debug else logging.INFO
+    logformat = "%(asctime)s - %(levelname)s - %(message)s" if args.logfile else "%(message)s"
+    logging.basicConfig(stream=sys.stdout, filename=args.logfile, level=loglevel, format=logformat)
+
+    db_path = args.database
+    datadir = os.path.dirname(db_path)
+    os.makedirs(datadir, exist_ok=True)
+
+    client = boto3.client("glacier")
+    vault = args.vault
+
+    inventory = ensure_inventory(client, vault, datadir)
+    if inventory is None:
+        return 0
+
+    backups_db = {}
+    if args.all:
+        # Build backup sets from inventory when database is unavailable
+        for name, info in inventory.items():
+            m = re.search(r"\d{8}-\d{6}-[0-9a-fA-F]{5}", name)
+            if not m:
+                logging.warning("Unable to determine backup id for %s", name)
+                continue
+            backups_db.setdefault(m.group(0), []).append(name)
+        targets = sorted(backups_db.keys())
+        if not targets:
+            logging.error("No backups found in inventory")
+            return 1
+    else:
+        if not os.path.exists(db_path):
+            logging.error("Database %s not found", db_path)
+            return 1
+        with open(db_path, "r", encoding="utf-8") as f:
+            db = json.load(f)
+        if db.get("vault") and db.get("vault") != vault:
+            logging.warning(
+                "Database was created for vault %s but using %s", db.get("vault"), vault
+            )
+        backups_db = db.get("backups", {})
+        missing = [b for b in args.backup if b not in backups_db]
+        if missing:
+            logging.error("Backup(s) not found: %s", ", ".join(missing))
+            return 1
+        targets = args.backup
+
+    os.makedirs(args.dest, exist_ok=True)
+
+    for backup in targets:
+        files = backups_db[backup]
+
+        destdir = os.path.join(args.dest, backup)
+        os.makedirs(destdir, exist_ok=True)
+
+        state_file = os.path.join(datadir, f"retrieve-{backup}.json")
+        state = load_state(state_file)
+
+        # Update state with any new files
+        for name in files:
+            if name not in inventory:
+                logging.error("File %s not found in vault inventory", name)
+                continue
+            if name not in state["files"]:
+                info = inventory[name]
+                state["files"][name] = {
+                    "name": name,
+                    "archiveId": info["archiveId"],
+                    "size": info.get("size"),
+                    "checksum": info.get("checksum"),
+                    "jobId": None,
+                    "status": "pending",
+                }
+        save_state(state_file, state)
+
+        pending = [f for f in state["files"].values() if f["status"] != "done"]
+        if not pending:
+            logging.info("All files for %s already retrieved", backup)
+            continue
+
+        # Request jobs if needed
+        for entry in pending:
+            if entry["jobId"] is None:
+                request_job(client, vault, entry)
+        save_state(state_file, state)
+
+        # Check which jobs are ready
+        ready = [e for e in pending if e["jobId"]]
+        to_download = []
+        for entry in ready:
+            if check_job(client, vault, entry):
+                to_download.append(entry)
+        if not to_download:
+            logging.info("No files for %s are ready for download yet", backup)
+            save_state(state_file, state)
+            continue
+
+        # Download ready files in parallel
+        with ThreadPoolExecutor(max_workers=args.threads) as exe:
+            futures = [exe.submit(download_job, client, vault, e, destdir) for e in to_download]
+            for fut in futures:
+                fut.result()
+
+        save_state(state_file, state)
+
+    logging.info("Done")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

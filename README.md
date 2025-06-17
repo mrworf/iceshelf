@@ -463,9 +463,9 @@ Depending on what happened during the run, iceshelf will return the following ex
 
 255 = Generic error, see log output
 
-# What's missing?
+# Retrieving backups
 
-There is as of yet no way to have iceshelf retrieve the backup it created and uploaded. For now you're left to use the `aws` tool itself to do that. Once you've retrieved the file(s), you can either extract it manually yourself or try the [iceshelf-restore](README.iceshelf-restore.md) tool which is in beta. It's fairly robust and is able to deal with most circumstances. It will not, however, allow you to easily download files from AWS Glacier.
+To download archives stored in Glacier use the [iceshelf-retrieve](README.iceshelf-retrieve.md) helper. It manages Glacier jobs and verifies files automatically. You can fetch one or more backups, or use `--all` to restore everything directly from the vault inventory.
 
 # Thoughts
 
