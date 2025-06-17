@@ -3,7 +3,6 @@ import sys
 import os.path
 import logging
 import os
-from . import aws
 
 setting = {
   "encrypt": None,
@@ -26,8 +25,6 @@ setting = {
   "extra-ext" : None,
   "donedir": "backup/done/",
   "maxkeep": 0,
-  "glacier-vault" : None,
-  "glacier-threads" : 4,
   "prefix" : "",
   "detect-move": False,
   "create-paths": False,
@@ -83,10 +80,6 @@ def parse(filename, onlysecurity=False):
       "create filelist": "yes",
       "check update": "no"
     },
-    "glacier": {
-      "vault": "",
-      "threads": "4"
-    },
     "custom": {
       "pre command": "",
       "post command": ""
@@ -112,6 +105,12 @@ def parse(filename, onlysecurity=False):
     for option, value in options.items():
       if not config.has_option(section, option):
         config.set(section, option, value)
+
+  # Detect deprecated glacier config
+  if config.has_section('glacier'):
+    logging.error('The [glacier] section is no longer supported.')
+    logging.error('Please migrate to provider sections. See providers/glacier.md and the wiki for details.')
+    return None
 
   # Validate the config
   if len(config.options("sources")) == 0 and not onlysecurity:
@@ -303,26 +302,16 @@ def parse(filename, onlysecurity=False):
       return None
     setting["sources"][x] = config.get("sources", x)
 
-  # Glacier options
-  if config.has_section("glacier"):
-    if config.has_option("glacier", "config"):
-      logging.error('Glacier config is deprecated. Please use official AWS tool from Amazon instead')
-      return None
-  if config.has_option("glacier", "vault") and config.get("glacier", "vault") != "":
-    setting["glacier-vault"] = config.get("glacier", "vault")
-    # Make sure AWS is configured
-    if not aws.isConfigured():
-      return None
-    if which('aws') is None:
-      logging.error('AWS command line tool not in path. Is it installed?')
-      return None
-    if config.has_option("glacier", "threads") and config.get("glacier", "threads") != "":
-      setting["glacier-threads"] = config.getint("glacier", "threads")
-      if setting["glacier-threads"] < 1:
-        logging.error('Threads for glacier cannot be less than one')
+  # Provider options (multiple sections allowed)
+  setting["providers"] = []
+  for section in config.sections():
+    if section.lower().startswith("provider-"):
+      provider_cfg = {k: v for k, v in config.items(section)}
+      if 'type' not in provider_cfg:
+        logging.error('Provider section %s must contain a type option', section)
         return None
-      if setting["glacier-threads"] > 16:
-        logging.warning('Using more than 16 threads for glacier upload doesn\'t necessarily make it faster')
+      setting["providers"].append(provider_cfg)
+
 
   # Custom options (not in-use yet
   if config.has_section("custom"):

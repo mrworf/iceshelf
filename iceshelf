@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 #
-# Ice Shelf for Glacier is a incremental backup tool which will upload any
-# changes to glacier. It can both encrypt and/or provide extra parity data
+# Ice Shelf is an incremental backup tool designed for immutable storage.
+# It can encrypt data and generate parity information
 # to make sure that the data is secure and has some measure of protection
 # against data corruption.
 #
@@ -192,8 +192,7 @@ from subprocess import Popen, PIPE
 import modules.configuration as configuration
 import modules.fileutils as fileutils
 import modules.helper as helper
-import modules.glacier as glacier
-import modules.aws as aws
+import modules.providers as providers
 
 lastBackup = None
 oldMoves = {}
@@ -408,6 +407,20 @@ tm = datetime.utcnow()
 config["unique"] = "%d%02d%02d-%02d%02d%02d-%05x" % (tm.year, tm.month, tm.day, tm.hour, tm.minute, tm.second, tm.microsecond)
 config["archivedir"] = os.path.join(config["prepdir"], config["unique"])
 
+# Instantiate backup providers
+providers_cfg = config.get("providers", [])
+provider_objects = []
+for p_cfg in providers_cfg:
+  try:
+    p = providers.get_provider(p_cfg)
+  except ValueError as e:
+    logging.error("Provider error: %s", e)
+    sys.exit(1)
+  if p is None:
+    logging.error("Invalid provider configuration for %s", p_cfg.get('type'))
+    sys.exit(1)
+  provider_objects.append(p)
+
 """
 Load the old data, containing checksums and backup sets
 """
@@ -613,21 +626,12 @@ logging.info(msg)
 
 # We want to avoid wasting requests, so only try to
 # create vaults if we need to.
-backup = False
-if config["glacier-vault"] is not None:
-  if config["glacier-vault"] != oldVault:
-    logging.info("Glacier vault most likely not in cloud, let's create it")
-    if aws.createVault(config):
-      backup = aws.uploadFiles(config, files, totalbytes)
-  else:
-    backup = aws.uploadFiles(config, files, totalbytes)
-else:
-  logging.info("Not uploading to Glacier since config is missing")
-  backup = True
-
-if not backup:
-  logging.error("Amazon Glacier upload failed, aborting")
-  sys.exit(1)
+file_paths = [os.path.join(config["prepdir"], f) for f in files]
+for p in provider_objects:
+  backup = p.upload_files(file_paths)
+  if not backup:
+    logging.error("Backup provider %s failed to store files", p)
+    sys.exit(1)
 
 #
 ##############################################################################
@@ -686,12 +690,28 @@ movedFiles.update(oldMoves)
 backupSets[config["unique"]] = files
 
 logging.info("Saving the new checksum")
+vault = None
+storage_ids = []
+for p in provider_objects:
+  try:
+    if vault is None:
+      pv = p.get_vault()
+      if pv:
+        vault = pv
+  except Exception:
+    logging.exception("Provider %s failed to report vault", p)
+  try:
+    storage_ids.append(p.storage_id())
+  except Exception:
+    logging.exception("Provider %s failed to report storage location", p)
+
 saveData = {
   "version" : configuration.getVersion(),
   "timestamp" : time.time(),
   "dataset" : oldFiles,
   "backups" : backupSets,
-  "vault" : config["glacier-vault"],
+  "vault" : vault,
+  "storage" : storage_ids,
   "moved" : movedFiles,
   "lastbackup" : config["prefix"] + config["unique"]
 }

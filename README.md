@@ -21,13 +21,52 @@ If used with immutable storage, then it also provides protection against ransomw
 - Signs all files it uploads (tamper detection)
 - Can upload separate PAR2 file for parity correction (allows for a certain amount of bitrot)
 - Supports segmentation of upload (but not of files, yet)
-- Primarily designed for AWS Glacier but can be used with other services
+- Pluggable provider system supporting Glacier, S3, SFTP, SCP and local copy
+  with the ability to upload to multiple destinations in one run
 - Tracks backups locally to help locate the file needed to restore
 - Keeps the exact directory structure of the backed up files
 - Provides paper-based GPG key backup/restore solution
 - Most features can be turned on/off and customized
 
-Due to the need to work well with immutable storage (in this case, specifically AWS Glacier), any change to a file will cause it to reupload the same file (with the new content). For this reason, this tool isn't recommended to use with data sources which changes a lot since it will produce a tremendous amount of data over time.
+## Backup providers
+
+Define one or more `provider` sections in the configuration file. Each section
+specifies a `type` and any provider-specific arguments. All configured
+providers will receive the generated archive for storage. The legacy `[glacier]`
+section has been removed; using it will now cause the tool to abort so that you
+review the new provider documentation.
+
+Provider sections must be named using the pattern `[provider-<name>]` where the
+portion after `provider-` is arbitrary. The name only helps you identify the
+section. A minimal configuration might look like:
+
+```
+[provider-local]
+type: cp
+dest: backup/done/
+
+[provider-cloud]
+type: s3
+bucket: mybucket
+```
+
+Refer to `providers/*.md` for the options available to each provider type.
+
+#### Migrating from older versions
+
+Older configurations used a dedicated `[glacier]` section. This section has been
+removed. Replace it with a provider block:
+
+```
+[provider-glacier]
+type: glacier
+vault: myvault
+threads: 4
+```
+
+Remove the old `[glacier]` section to avoid startup errors.
+
+Due to the need to work well with immutable storage (for example, AWS Glacier), any change to a file will cause it to reupload the same file with the new content. For this reason, this tool isn't recommended to use with data sources which change frequently as it will produce a tremendous amount of data over time.
 
 This is an archiving solution for long-term storage which is what Glacier excels
 at. Also the reason it's called iceshelf. To quote from wikipedia:
@@ -50,7 +89,7 @@ me, finding cool names (phun intended) for projects is not always easy*
 9. Parity file(s) are created to allow the archive to be restored should bitrot happen
 10. Filelist with checksums is created
 11. All extra files (filelist, parity, etc) files are signed
-12. Resulting files are uploaded to the cloud (may take a while with AWS Glacier, skipped if no cloud config))
+12. Resulting files are uploaded using the configured providers (remote uploads may take a while)
 13. Backup is copied to safe keeping (if done directory is specified)
 14. Prep directory is emptied
 15. New backup is added to local database
@@ -79,7 +118,7 @@ In order to be able to run this, you need a few other parts installed.
 - python-gnupg - Encryption & Signature (NOT `gnupg`, it's `python-gnupg`)
   Ubuntu comes with a version, but unfortunately it's too old. You should install this using the `pip3` tool to make sure you get a current version.
 - par2 - Parity tool
-- aws - In order to upload archive to glacier
+- aws - In order to upload archives to AWS services such as S3 or Glacier
 
 ### Installing on Ubuntu
 
@@ -99,10 +138,9 @@ This is the simple version which points out what commands to run. Please conside
   sudo apt-get install par2
   ```
 
-4. AWS Glacier
-  ```
-  sudo apt install awscli
-  ```
+4. AWS CLI
+  Install the `aws` command by following the official instructions:
+  <https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html>
 
 For more details, see the [step-by-step guide](https://github.com/mrworf/iceshelf/wiki) in the wiki.
 
@@ -129,7 +167,7 @@ Iceshelf needs some space for both temporary files and the local database.
 
 #### prep dir
 
-The folder to hold the temporary files, like the in-transit tar files and related files, so a ram-backed storage (such as tmpfs) is a **VERY BAD IDEA**. Especially since AWS Glacier uploads can take "a while".
+The folder to hold the temporary files, like the in-transit tar files and related files, so a ram-backed storage (such as tmpfs) is a **VERY BAD IDEA**. Uploads to remote storage may take quite a while.
 
 *default is `backup/inprogress/`*
 
@@ -141,7 +179,7 @@ Where to store local data needed by iceshelf to function. Today that's a checksu
 
 #### done dir
 
-Where to store the backup once it's been completed. If this is blank, no backup is stored. Also see `max keep` under `[options]` for additional configuration. By setting this option and not defining a glacier config, you can use iceshelf as a standalone backup tool without dependencies on AWS Glacier.
+Where to store the backup once it's been completed. If this is blank, no backup is stored. Also see `max keep` under `[options]` for additional configuration. By setting this option and not defining any provider sections, you can use iceshelf purely for local backups.
 
 Please note that it copies the data to the new location and only on success will it delete the original archive files.
 
@@ -312,21 +350,24 @@ my rules=|/some/path/my-rules.excl
 
 What essentially happens is that the "my rules" line is replaced with all the rules defined inside my-rules.excl. The only restriction of the external rules reference is that you are not able to reference other external rule files from an external rule file (yes, no recursion for you).
 
-### Section [glacier]
+### Section [provider-*]
 
-This is, believe it or not, optional. Yes, you can run iceshelf locally and have it store the backup on whatever storage that the `done dir` option is pointing at. However, should you decide to use this for glacier, you'll first of all need to make sure that aws is installed.
+Providers control where your backups are stored. Create one or more sections with
+names beginning with `provider-`. Each section must define a `type` matching one
+of the built‑in providers (cp, sftp, scp, s3 or glacier) and any additional
+options documented in `providers/*.md`.
 
-You can of course use both the glacier options and `done dir` if you prefer a local copy of any AWS Glacier copy.
+Example:
 
-#### vault
+```
+[provider-local]
+type: cp
+dest: /mnt/backup/
+create: yes
+```
 
-The name of the vault. Iceshelf will automatically create the vault if it doesn't exist, it will also avoid doing so to minimize the operations towards the AWS to avoid extra fees. It does this by only creating/checking the existance of the vault when you run iceshelf the first time or when you change the vault name from its previous name.
-
-#### threads
-
-The number of threads to use during upload. The default is 4. This can be tweaked to improve performance. For instance, when sending content to far away datacenters the throughput per connection might be as low as 200K/s, which will make uploads take a long time. By using more threads, iceshelf will upload multiple parts of a file concurrently.
-
-NOTE! You will need to run ```aws configure``` for the user which will be running iceshelf in order to set up the aws tool. Iceshelf will try to make sure that this has been done and stop before starting the process.
+All provider sections are processed in order and the backup files will be
+uploaded to each destination.
 
 ### Section [security]
 
@@ -424,7 +465,7 @@ Depending on what happened during the run, iceshelf will return the following ex
 
 # What's missing?
 
-There is as of yet no way to have iceshelf retreive the backup it created and uploaded. For now you're left to use the `aws` tool itself to do that. Once you've retrieved the file(s), you can either extract it manually yourself or try the [iceshelf-restore](README.iceshelf-restore.md) tool which is in beta. It's fairly robust and is able to deal with most circumstances. It will not, however, allow you to easily download files from glacier. 
+There is as of yet no way to have iceshelf retrieve the backup it created and uploaded. For now you're left to use the `aws` tool itself to do that. Once you've retrieved the file(s), you can either extract it manually yourself or try the [iceshelf-restore](README.iceshelf-restore.md) tool which is in beta. It's fairly robust and is able to deal with most circumstances. It will not, however, allow you to easily download files from AWS Glacier.
 
 # Thoughts
 
@@ -435,7 +476,7 @@ There is as of yet no way to have iceshelf retreive the backup it created and up
 
 ## I keep getting "Signature not yet current" errors when uploading
 
-This is caused by your system clock being off by more than 5 minutes. It's highly recommended that you run a time synchronization daemon such as NTPd on the machine which is responsible for uploading the backup to glacier.
+This is caused by your system clock being off by more than 5 minutes. It's highly recommended that you run a time synchronization daemon such as NTPd on the machine which is responsible for uploading the backup to AWS.
 
 ## When I run the tool, it says "Current GnuPG python module does not support file encryption, please check FAQ section in documentation"
 
@@ -471,3 +512,5 @@ There is also an experimental tool called [iceshelf-restore](README.iceshelf-res
 Please use the testsuite and run a complete iteration with GPG and PAR2. Also extend the suite if needed to cover any specific testcase which was previously missed.
 
 If you submit a pull request, please include the output from the testsuite.
+The tests rely on the `par2` and `gpg` tools being available in the PATH,
+so make sure they are installed before running `extras/testsuite/test.sh`.
