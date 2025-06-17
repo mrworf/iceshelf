@@ -305,7 +305,7 @@ def parse(filename, onlysecurity=False):
   # Provider options (multiple sections allowed)
   setting["providers"] = []
   for section in config.sections():
-    if section.lower().startswith("provider"):
+    if section.lower().startswith("provider-"):
       provider_cfg = {k: v for k, v in config.items(section)}
       if 'type' not in provider_cfg:
         logging.error('Provider section %s must contain a type option', section)

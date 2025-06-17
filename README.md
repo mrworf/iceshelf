@@ -36,6 +36,36 @@ providers will receive the generated archive for storage. The legacy `[glacier]`
 section has been removed; using it will now cause the tool to abort so that you
 review the new provider documentation.
 
+Provider sections must be named using the pattern `[provider-<name>]` where the
+portion after `provider-` is arbitrary. The name only helps you identify the
+section. A minimal configuration might look like:
+
+```
+[provider-local]
+type: cp
+dest: backup/done/
+
+[provider-cloud]
+type: s3
+bucket: mybucket
+```
+
+Refer to `providers/*.md` for the options available to each provider type.
+
+#### Migrating from older versions
+
+Older configurations used a dedicated `[glacier]` section. This section has been
+removed. Replace it with a provider block:
+
+```
+[provider-glacier]
+type: glacier
+vault: myvault
+threads: 4
+```
+
+Remove the old `[glacier]` section to avoid startup errors.
+
 Due to the need to work well with immutable storage (for example, AWS Glacier), any change to a file will cause it to reupload the same file with the new content. For this reason, this tool isn't recommended to use with data sources which change frequently as it will produce a tremendous amount of data over time.
 
 This is an archiving solution for long-term storage which is what Glacier excels
@@ -319,6 +349,25 @@ my rules=|/some/path/my-rules.excl
 ```
 
 What essentially happens is that the "my rules" line is replaced with all the rules defined inside my-rules.excl. The only restriction of the external rules reference is that you are not able to reference other external rule files from an external rule file (yes, no recursion for you).
+
+### Section [provider-*]
+
+Providers control where your backups are stored. Create one or more sections with
+names beginning with `provider-`. Each section must define a `type` matching one
+of the built‑in providers (cp, sftp, scp, s3 or glacier) and any additional
+options documented in `providers/*.md`.
+
+Example:
+
+```
+[provider-local]
+type: cp
+dest: /mnt/backup/
+create: yes
+```
+
+All provider sections are processed in order and the backup files will be
+uploaded to each destination.
 
 ### Section [security]
 
