@@ -463,3 +463,5 @@ There is also an experimental tool called [iceshelf-restore](README.iceshelf-res
 Please use the testsuite and run a complete iteration with GPG and PAR2. Also extend the suite if needed to cover any specific testcase which was previously missed.
 
 If you submit a pull request, please include the output from the testsuite.
+The tests rely on the `par2` and `gpg` tools being available in the PATH,
+so make sure they are installed before running `extras/testsuite/test.sh`.
