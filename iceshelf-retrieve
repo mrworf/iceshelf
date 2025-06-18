@@ -252,8 +252,7 @@ def main():
     for backup in targets:
         files = backups_db[backup]
 
-        destdir = os.path.join(args.dest, backup)
-        os.makedirs(destdir, exist_ok=True)
+        destdir = args.dest
 
         state_file = os.path.join(datadir, f"retrieve-{backup}.json")
         state = load_state(state_file)
