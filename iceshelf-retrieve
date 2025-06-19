@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import boto3
 
-import modules.aws as aws
+from modules import aws
 
 
 STATE_VERSION = 1
@@ -179,7 +179,6 @@ def main():
     )
     parser.add_argument(
         "--database",
-        default="backup/metadata/checksum.json",
         help="Path to checksum.json database",
     )
     parser.add_argument("--all", action="store_true", default=False, help="Retrieve all backups")
@@ -202,10 +201,13 @@ def main():
 
     loglevel = logging.DEBUG if args.debug else logging.INFO
     logformat = "%(asctime)s - %(levelname)s - %(message)s" if args.logfile else "%(message)s"
-    logging.basicConfig(stream=sys.stdout, filename=args.logfile, level=loglevel, format=logformat)
+    if args.logfile:
+        logging.basicConfig(filename=args.logfile, level=loglevel, format=logformat)
+    else:
+        logging.basicConfig(stream=sys.stdout, level=loglevel, format=logformat)
 
     db_path = args.database
-    datadir = os.path.dirname(db_path)
+    datadir = os.path.dirname(db_path) if db_path else args.dest
     os.makedirs(datadir, exist_ok=True)
 
     client = boto3.client("glacier")
@@ -250,8 +252,7 @@ def main():
     for backup in targets:
         files = backups_db[backup]
 
-        destdir = os.path.join(args.dest, backup)
-        os.makedirs(destdir, exist_ok=True)
+        destdir = args.dest
 
         state_file = os.path.join(datadir, f"retrieve-{backup}.json")
         state = load_state(state_file)

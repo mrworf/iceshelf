@@ -21,11 +21,12 @@ iceshelf-retrieve VAULT --all [--database FILE] [--dest DIR] [--threads N]
 ```
 
 - `VAULT` – name of the Glacier vault where archives are stored.
-- `--database` – path to the `checksum.json` database (defaults to `backup/metadata/checksum.json`).
-  This file is optional when using `--all`.
+- `--database` – path to the `checksum.json` database. This file is optional when using `--all`.
 - `BACKUP` – name of a backup set to retrieve (for example
   `20230101-123456-00000`). Multiple backups can be listed.
-- `--dest` – directory where files are stored (defaults to `retrieved/`).
+- `--dest` – directory where files are stored (defaults to `retrieved/`). All
+  downloads are placed directly in this directory without creating backup
+  subfolders.
 - `--threads` – number of concurrent downloads.
 - `--all` – download every backup in the vault using only the Glacier inventory.
 
