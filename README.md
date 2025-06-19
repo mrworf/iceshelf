@@ -505,7 +505,7 @@ If this turns out to be a major concern/issue, I'll revisit this question.
 
 Using the `--list sets` option, iceshelf will list the necessary backups you need to restore and in the order to do it. If a file was moved, the tool will display what the original name was and what the new name is supposed to be.
 
-There is also an experimental tool called [iceshelf-restore](README.iceshelf-restore.md) which you can use to more easily extract a backup. It will use your `iceshelf.conf` file and do all the validation as well as potential repair as needed.
+There is also an experimental tool called [iceshelf-restore](README.iceshelf-restore.md) which you can use to more easily extract a backup. Configuration is optional; the tool can validate or restore a backup directly from the files and will attempt repairs if parity data is available.
 
 ## After doing some development on the code, how will I know something didn't break?
 

@@ -97,10 +97,11 @@ def stripFile(filename):
     if os.path.exists(destfile):
       os.remove(destfile)
     with open(filename, 'rb') as f:
-      result = gpg.decrypt_file(f,
-                                always_trust=True,
-                                passphrase=config['encrypt-pw'],
-                                output=destfile)
+      result = gpg.decrypt_file(
+        f,
+        always_trust=True,
+        passphrase=config.get('encrypt-pw'),
+        output=destfile)
     if result is None:
       logging.error('Unable to decrypt (unknown reason): %s' % filename)
       return None
@@ -115,17 +116,40 @@ def stripFile(filename):
   return destfile
 
 def getBackupFiles(itemFromBackup):
-  # Get the files in that folder and filter out the ones not part of the backup
-  basename, ignore = os.path.basename(itemFromBackup).split('.', 1)
+  """Locate all files belonging to a backup based on a path or prefix"""
   basepath = os.path.dirname(itemFromBackup)
+  basename = os.path.basename(itemFromBackup)
+
+  if os.path.isdir(itemFromBackup):
+    basepath = itemFromBackup
+    basename = None
+
   if basepath == '':
     basepath = './'
+
   unfiltered = os.listdir(basepath)
+
+  if basename and '.' in basename:
+    basename = basename.split('.', 1)[0]
+  elif basename:
+    # guess first file with this prefix
+    for f in unfiltered:
+      if f.startswith(basename):
+        basename = f.split('.', 1)[0]
+        break
+  else:
+    # No basename supplied, pick first suitable file
+    for f in unfiltered:
+      if '.json' in f or '.tar' in f:
+        basename = f.split('.', 1)[0]
+        break
+
   files = []
   for f in unfiltered:
-    if os.path.basename(f).startswith(basename) or f == "filelist.txt":
+    if basename is None or os.path.basename(f).startswith(basename) or f == "filelist.txt":
       logging.debug('Found backup file "%s"' % f)
       files.append(f)
+
   return (basepath, files)
 
 
@@ -135,11 +159,14 @@ parser = argparse.ArgumentParser(description="Iceshelf Restore - Restores the co
 parser.add_argument('--logfile', metavar="FILE", help="Log to file instead of stdout")
 parser.add_argument('--debug', action='store_true', default=False, help='Adds more details to the log output')
 parser.add_argument('--restore', metavar="DEST", default=None, help='Extracts the backup')
+parser.add_argument('--validate', action='store_true', default=False, help='Validate the backup without restoring')
+parser.add_argument('--repair', action='store_true', default=False, help='Attempt to repair damaged archive using parity')
 parser.add_argument('--list', action='store_true', default=False, help='List contents of backup (will not extract)')
 parser.add_argument('--lastbackup', metavar='LAST', help='If set, requires the backup to be the successor of LAST')
 parser.add_argument('--force', action='store_true', default=False, help='Even if manifest is missing, it will at least try to verify and repair archive')
-parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
-parser.add_argument('backup', metavar="BACKUP", help="File from an iceshelf backup")
+parser.add_argument('--config', metavar="CONFIG", default=None, help="Configuration file to load (optional)")
+parser.add_argument('--passphrase', metavar='PW', default=None, help='Decrypt using supplied passphrase')
+parser.add_argument('backup', metavar="BACKUP", help="Path to backup prefix or file")
 cmdline = parser.parse_args()
 
 """ Setup logging first """
@@ -164,14 +191,18 @@ if not "encrypt_file" in dir(gnupg.GPG()):
 
 #######################
 
-config = configuration.parse(cmdline.config, True)
-if config is None:
-  logging.error("Configuration is broken, please check %s" % cmdline.config)
-  sys.exit(1)
+config = {}
+if cmdline.config:
+  config = configuration.parse(cmdline.config, True)
+  if config is None:
+    logging.error("Configuration is broken, please check %s" % cmdline.config)
+    sys.exit(1)
+else:
+  config = {}
+if cmdline.passphrase:
+  config['encrypt-pw'] = cmdline.passphrase
 
-if not os.path.isfile(cmdline.backup):
-  logging.error('"%s" is not a file' % cmdline.backup)
-  sys.exit(1)
+
 
 basepath, files = getBackupFiles(cmdline.backup)
 
@@ -223,6 +254,8 @@ elif oldfilelist:
 
 # Strip all files except archive (ie, verify signature and decrypt)
 # since archive might need repairs and for that we need PAR2
+do_manifest = cmdline.list or cmdline.restore or cmdline.validate
+
 for f in files:
   if f in corruptFiles:
     continue
@@ -234,7 +267,7 @@ for f in files:
       sys.exit(1)
 
   # Do not extract files we don't need (ie, when not extracting)
-  if not cmdline.list and not cmdline.restore:
+  if not do_manifest:
     continue
 
   if f != fileManifest and not cmdline.restore:
@@ -249,10 +282,10 @@ for f in files:
     if n.endswith('.json'):
       fileManifest = n
 
-if not cmdline.list and not cmdline.restore:
+if not do_manifest:
   sys.exit(0)
 
-if cmdline.restore and fileParity is not None and len(corruptFiles) > 0:
+if (cmdline.restore or cmdline.repair) and fileParity is not None and len(corruptFiles) > 0:
   logging.info('Repairing corrupted archive file "%s"' % fileArchive)
   for f in processedFiles:
     if f.endswith(fileArchive + '.par2'):
@@ -273,9 +306,7 @@ if cmdline.restore:
   if archive is None:
     logging.error('Unable to process "%s"' % fileArchive)
     sys.exit(1)
-else:
-    logging.info('No restore directory given. Exit.')
-    sys.exit(0)
+
 
 if fileManifest is None:
   logging.info('This is as much as can be done. You can now manually extract the files')
