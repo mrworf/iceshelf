@@ -214,6 +214,11 @@ parser.add_argument(
     default=None,
     help="Configuration file to load (optional)")
 parser.add_argument(
+    '--user',
+    metavar='USER',
+    default=None,
+    help='GPG key user or ID used for decryption')
+parser.add_argument(
     '--passphrase',
     metavar='PW',
     default=None,
@@ -284,6 +289,8 @@ else:
     config = {}
 if cmdline.passphrase:
     config['encrypt-pw'] = cmdline.passphrase
+if cmdline.user:
+    config['encrypt'] = cmdline.user
 
 
 basepath, files = getBackupFiles(cmdline.backup)

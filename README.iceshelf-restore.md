@@ -18,7 +18,7 @@ Backup must be alone in a directory, you cannot store multiple backups in a fold
 
 # Usage
 
-The tool accepts either a single file from the backup or just the prefix of the backup files. Configuration is optional, but can be provided using `--config` if you have it available. Without it you may supply the passphrase using `--passphrase`.
+The tool accepts either a single file from the backup or just the prefix of the backup files. Configuration is optional, but can be provided using `--config` if you have it available. Without it you may supply the GPG user using `--user` and the passphrase using `--passphrase`.
 Running the command with no extra arguments will validate the backup and return `0` on success.
 
 Note! If the archive is corrupt, it will only tell you if there is the possibility to repair it. It is *NO GUARANTEE* that you actually can.
