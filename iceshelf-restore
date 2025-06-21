@@ -78,13 +78,9 @@ def validate_file(filepath):
     logging.debug('Validating "%s"', filepath)
 
     if filepath.endswith('.sig') or filepath.endswith('.asc'):
-        data_file = filepath.rsplit('.', 1)[0]
-        if not os.path.exists(data_file):
-            logging.error('Missing file for signature: %s', data_file)
-            return False
         try:
             with open(filepath, 'rb') as sig_file:
-                verification = gpg.verify_file(sig_file, data_file)
+                verification = gpg.verify_file(sig_file)
         except OSError as exc:
             logging.error('gpg verification failed: %s', exc)
             return False
