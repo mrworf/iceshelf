@@ -223,6 +223,20 @@ parser.add_argument(
     help="Path to backup prefix or file")
 cmdline = parser.parse_args()
 
+restore_base = cmdline.restore or ""
+
+
+# Delay logging mode information until logging is configured
+mode = []
+if cmdline.validate:
+    mode.append('validate')
+if cmdline.list:
+    mode.append('list')
+if cmdline.repair:
+    mode.append('repair')
+if cmdline.restore:
+    mode.append('restore')
+
 # Setup logging
 logging.getLogger('').handlers = []
 LOG_LEVEL = logging.INFO
@@ -247,6 +261,8 @@ else:
 logging.getLogger("gnupg").setLevel(logging.WARNING)
 logging.getLogger("shutil").setLevel(logging.WARNING)
 
+logging.info('Starting iceshelf-restore in %s mode', ', '.join(mode) or 'validate')
+
 # Make sure we have the correct gnupg module
 if "encrypt_file" not in dir(gnupg.GPG()):
     logging.error(
@@ -270,6 +286,8 @@ if cmdline.passphrase:
 
 
 basepath, files = getBackupFiles(cmdline.backup)
+logging.info('Located backup in "%s"', basepath)
+logging.info('Detected backup files: %s', ', '.join(files))
 
 file_manifest = None
 file_archive = None
@@ -329,6 +347,7 @@ elif old_filelist:
 
 # Strip all files except archive (ie, verify signature and decrypt)
 # since archive might need repairs and for that we need PAR2
+logging.info('Validating backup files')
 do_manifest = cmdline.list or cmdline.restore or cmdline.validate
 
 for f in files:
@@ -362,7 +381,7 @@ if not do_manifest:
 
 if (cmdline.restore or cmdline.repair) and file_parity is not None and len(
         corrupt_files) > 0:
-    logging.info('Repairing corrupted archive file "%s"', file_archive)
+    logging.info('Attempting repair of "%s"', file_archive)
     for f in processed_files:
         if f.endswith(file_archive + '.par2'):
             if not fileutils.repairParity(f):
@@ -375,6 +394,7 @@ if (cmdline.restore or cmdline.repair) and file_parity is not None and len(
 
 # Strip the archive
 if cmdline.restore:
+    logging.info('Preparing to restore files to "%s"', cmdline.restore)
     if not validateFile(os.path.join(basepath, file_archive)):
         logging.error('File "%s" signature does not match', file_archive)
         if not cmdline.force:
@@ -421,7 +441,7 @@ filecount = 0
 fileerror = 0
 for k in manifest['modified']:
     v = manifest['modified'][k]
-    src = os.path.normpath(cmdline.restore + k)
+    src = os.path.normpath(restore_base + k)
     if cmdline.list:
         logging.info(
             'Manifest: Modified or new file "%s" in "%s"',
@@ -456,7 +476,7 @@ if cmdline.restore:
 
 # Step 1: Remove any files that were deleted
 for f in manifest['deleted']:
-    src = os.path.normpath(cmdline.restore + f)
+    src = os.path.normpath(restore_base + f)
     if cmdline.list:
         logging.info('Manifest: Deleting "%s"', src)
     if cmdline.restore:
@@ -467,8 +487,8 @@ for f in manifest['deleted']:
 
 for k in manifest['moved']:
     v = manifest['moved'][k]
-    src = os.path.normpath(cmdline.restore + v['original'])
-    dst = os.path.normpath(cmdline.restore + k)
+    src = os.path.normpath(restore_base + v['original'])
+    dst = os.path.normpath(restore_base + k)
     if cmdline.list:
         logging.info('Manifest: Moving "%s" to "%s"', src, dst)
     if cmdline.restore:
@@ -485,7 +505,7 @@ if not cmdline.restore:
 with tarfile.open(archive, "r:*") as tar:
     item = tar.next()
     while item is not None:
-        filename = os.path.normpath(cmdline.restore + "/" + item.name)
+        filename = os.path.normpath(restore_base + '/' + item.name)
         logging.info(
             'Extracting "%s" to "%s"',
             os.path.basename(filename),
