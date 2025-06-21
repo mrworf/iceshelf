@@ -370,25 +370,24 @@ for f in files:
     if f == file_archive:
         continue
     if not validate_file(os.path.join(basepath, f)):
-        logging.error('File "%s" signature does not match', f)
-        if not cmdline.force:
-            sys.exit(1)
+        logging.warning('Skipping "%s" due to failed validation', f)
+        continue
 
     # Do not extract files we don't need (ie, when not extracting)
     if not do_manifest:
         continue
 
-    if f != file_manifest and not cmdline.restore:
-        continue
-
     n = strip_file(os.path.join(basepath, f))
     if n is None:
-        logging.error('Unable to process "%s"', f)
-        sys.exit(1)
-    else:
-        processed_files.append(n)
-        if n.endswith('.json'):
-            file_manifest = n
+        logging.warning('Unable to process "%s"', f)
+        continue
+    processed_files.append(n)
+    if n.endswith('.json'):
+        file_manifest = n
+
+if not file_manifest or not os.path.exists(file_manifest):
+    logging.error('No valid manifest found, aborting')
+    sys.exit(1)
 
 if not do_manifest:
     sys.exit(0)
