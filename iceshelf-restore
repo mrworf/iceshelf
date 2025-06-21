@@ -7,249 +7,324 @@
 # NOTE! Will not do anything if a manifest is missing.
 #
 ##############################################################################
+# pylint: disable=invalid-name
 
-import logging
 import argparse
-import sys
-import os.path
 import json
-from datetime import datetime
-import time
-import shutil
+import logging
+import os.path
+import re
+import sys
 import tarfile
 import gnupg
-import re
-from subprocess import Popen, PIPE
 
 import modules.configuration as configuration
 import modules.fileutils as fileutils
-import modules.helper as helper
 
-def validArchive(baseDir, filelist, corruptFiles, files):
-  """
-  Start with validating all files and confirm existance of files, using the filelist.txt
-  """
-  p = re.compile('([a-f0-9]+)\s+([^\s]+)')
-  criticalerror = False
-  archivecorrupt = False
-  paritycount = 0
-  del files[:]
-  with open( os.path.join(baseDir, filelist), "r") as f:
-    for line in f:
-      res = p.match(line)
-      if res:
-        if os.path.exists(os.path.join(baseDir, res.group(2))):
-          files.append(res.group(2))
-          sha = fileutils.hashFile(os.path.join(baseDir, res.group(2)), 'sha1')
-          if sha != res.group(1):
-            corruptFiles.append(res.group(2))
-            if ".json" in line:
-              logging.error('Manifest is corrupt, please restore manually')
-              criticalerror = True
-            elif ".tar" in line:
-              archivecorrupt = True
-            elif ".par2" in line:
-              logging.warn('Parity file "%s" is corrupt and will not be used' % res.group(2))
-          elif ".par2" in line:
-            paritycount += 1
-        else:
-          logging.error('File "%s" is missing from backup' % res.group(2))
-          return False
-      else:
-        logging.error("filelist.txt is corrupt")
-        return False
-  if archivecorrupt and paritycount == 0:
-    logging.error('Archive is corrupt and no available parity files')
-    criticalerror = True
-  elif archivecorrupt:
-    logging.warn('Archive is corrupt, but parity is available making repair a possibility')
-  return criticalerror == False
+
+def validArchive(baseDir, filelist, corrupt_files, files):
+    """
+    Start with validating all files and confirm existance of files, using the filelist.txt
+    """
+    p = re.compile('([a-f0-9]+)\\s+([^\\s]+)')
+    criticalerror = False
+    archivecorrupt = False
+    paritycount = 0
+    del files[:]
+    with open(os.path.join(baseDir, filelist), "r", encoding='utf-8') as f:
+        for line in f:
+            res = p.match(line)
+            if res:
+                if os.path.exists(os.path.join(baseDir, res.group(2))):
+                    files.append(res.group(2))
+                    sha = fileutils.hashFile(
+                        os.path.join(baseDir, res.group(2)), 'sha1')
+                    if sha != res.group(1):
+                        corrupt_files.append(res.group(2))
+                        if ".json" in line:
+                            logging.error(
+                                'Manifest is corrupt, please restore manually')
+                            criticalerror = True
+                        elif ".tar" in line:
+                            archivecorrupt = True
+                        elif ".par2" in line:
+                            logging.warning(
+                                'Parity file "%s" is corrupt and will not be used',
+                                res.group(2))
+                    elif ".par2" in line:
+                        paritycount += 1
+                else:
+                    logging.error(
+                        'File "%s" is missing from backup' %
+                        res.group(2))
+                    return False
+            else:
+                logging.error("filelist.txt is corrupt")
+                return False
+    if archivecorrupt and paritycount == 0:
+        logging.error('Archive is corrupt and no available parity files')
+        criticalerror = True
+    elif archivecorrupt:
+        logging.warning(
+            'Archive is corrupt, but parity is available making repair a possibility')
+    return criticalerror == False
+
 
 def validateFile(filename):
-  global config
-  gpg = gnupg.GPG()
-  destfile = filename
+    gpg = gnupg.GPG()
 
-  logging.debug('Validating "%s"' % filename)
+    logging.debug('Validating "%s"', filename)
 
-  if filename.endswith('.sig') or filename.endswith('.asc'):
-    verification = None
-    with open(filename, 'rb') as f:
-      verification = gpg.verify_file(f)
-    if verification is None or verification.trust_level < verification.TRUST_FULLY:
-      logging.error('Signature isn\'t trusted (%s): %s' % (verification.status, filename))
-      return False
-  return True
+    if filename.endswith('.sig') or filename.endswith('.asc'):
+        verification = None
+        with open(filename, 'rb') as f:
+            verification = gpg.verify_file(f)
+        if verification is None or verification.trust_level < verification.TRUST_FULLY:
+            logging.error(
+                "Signature isn't trusted (%s): %s",
+                verification.status,
+                filename)
+            return False
+    return True
+
 
 def stripFile(filename):
-  global config
-  gpg = gnupg.GPG()
-  destfile = filename
+    gpg = gnupg.GPG()
+    destfile = filename
 
-  logging.debug('Processing "%s"' % filename)
+    logging.debug('Processing "%s"', filename)
 
-  while destfile.endswith('.sig') or destfile.endswith('.asc') or destfile.endswith('.gpg'):
-    ext = destfile[-4:]
-    destfile = destfile[0:-4]
-    if destfile[-4:] == '.gpg' and ext == '.asc':
-      destfile = destfile[0:-4] + ext
-    result = None
-    if os.path.exists(destfile):
-      os.remove(destfile)
-    with open(filename, 'rb') as f:
-      result = gpg.decrypt_file(
-        f,
-        always_trust=True,
-        passphrase=config.get('encrypt-pw'),
-        output=destfile)
-    if result is None:
-      logging.error('Unable to decrypt (unknown reason): %s' % filename)
-      return None
-    if result is None or not os.path.exists(destfile):
-      logging.error('Unable to decrypt (%s): %s' % (result.status, filename))
-      return None
-    filename = destfile
+    while destfile.endswith('.sig') or destfile.endswith(
+            '.asc') or destfile.endswith('.gpg'):
+        ext = destfile[-4:]
+        destfile = destfile[0:-4]
+        if destfile[-4:] == '.gpg' and ext == '.asc':
+            destfile = destfile[0:-4] + ext
+        result = None
+        if os.path.exists(destfile):
+            os.remove(destfile)
+        with open(filename, 'rb') as f:
+            result = gpg.decrypt_file(
+                f,
+                always_trust=True,
+                passphrase=config.get('encrypt-pw'),
+                output=destfile)
+        if result is None:
+            logging.error('Unable to decrypt (unknown reason): %s', filename)
+            return None
+        if result is None or not os.path.exists(destfile):
+            logging.error(
+                'Unable to decrypt (%s): %s',
+                result.status,
+                filename)
+            return None
+        filename = destfile
 
-  if filename != destfile:
-    fileutils.copy(filename, destfile)
+    if filename != destfile:
+        fileutils.copy(filename, destfile)
 
-  return destfile
+    return destfile
+
 
 def getBackupFiles(itemFromBackup):
-  """Locate all files belonging to a backup based on a path or prefix"""
-  basepath = os.path.dirname(itemFromBackup)
-  basename = os.path.basename(itemFromBackup)
+    """Locate all files belonging to a backup based on a path or prefix"""
+    basepath = os.path.dirname(itemFromBackup)
+    basename = os.path.basename(itemFromBackup)
 
-  if os.path.isdir(itemFromBackup):
-    basepath = itemFromBackup
-    basename = None
+    if os.path.isdir(itemFromBackup):
+        basepath = itemFromBackup
+        basename = None
 
-  if basepath == '':
-    basepath = './'
+    if basepath == '':
+        basepath = './'
 
-  unfiltered = os.listdir(basepath)
+    unfiltered = os.listdir(basepath)
 
-  if basename and '.' in basename:
-    basename = basename.split('.', 1)[0]
-  elif basename:
-    # guess first file with this prefix
+    if basename and '.' in basename:
+        basename = basename.split('.', 1)[0]
+    elif basename:
+        # guess first file with this prefix
+        for f in unfiltered:
+            if f.startswith(basename):
+                basename = f.split('.', 1)[0]
+                break
+    else:
+        # No basename supplied, pick first suitable file
+        for f in unfiltered:
+            if '.json' in f or '.tar' in f:
+                basename = f.split('.', 1)[0]
+                break
+
+    files = []
     for f in unfiltered:
-      if f.startswith(basename):
-        basename = f.split('.', 1)[0]
-        break
-  else:
-    # No basename supplied, pick first suitable file
-    for f in unfiltered:
-      if '.json' in f or '.tar' in f:
-        basename = f.split('.', 1)[0]
-        break
+        if basename is None or os.path.basename(
+                f).startswith(basename) or f == "filelist.txt":
+            logging.debug('Found backup file "%s"', f)
+            files.append(f)
 
-  files = []
-  for f in unfiltered:
-    if basename is None or os.path.basename(f).startswith(basename) or f == "filelist.txt":
-      logging.debug('Found backup file "%s"' % f)
-      files.append(f)
-
-  return (basepath, files)
+    return (basepath, files)
 
 
-
-""" Parse command line """
-parser = argparse.ArgumentParser(description="Iceshelf Restore - Restores the contents of an iceshelf backup", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-parser.add_argument('--logfile', metavar="FILE", help="Log to file instead of stdout")
-parser.add_argument('--debug', action='store_true', default=False, help='Adds more details to the log output')
-parser.add_argument('--restore', metavar="DEST", default=None, help='Extracts the backup')
-parser.add_argument('--validate', action='store_true', default=False, help='Validate the backup without restoring')
-parser.add_argument('--repair', action='store_true', default=False, help='Attempt to repair damaged archive using parity')
-parser.add_argument('--list', action='store_true', default=False, help='List contents of backup (will not extract)')
-parser.add_argument('--lastbackup', metavar='LAST', help='If set, requires the backup to be the successor of LAST')
-parser.add_argument('--force', action='store_true', default=False, help='Even if manifest is missing, it will at least try to verify and repair archive')
-parser.add_argument('--config', metavar="CONFIG", default=None, help="Configuration file to load (optional)")
-parser.add_argument('--passphrase', metavar='PW', default=None, help='Decrypt using supplied passphrase')
-parser.add_argument('backup', metavar="BACKUP", help="Path to backup prefix or file")
+# Parse command line
+parser = argparse.ArgumentParser(
+    description="Iceshelf Restore - Restores the contents of an iceshelf backup",
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+parser.add_argument(
+    '--logfile',
+    metavar="FILE",
+    help="Log to file instead of stdout")
+parser.add_argument(
+    '--debug',
+    action='store_true',
+    default=False,
+    help='Adds more details to the log output')
+parser.add_argument(
+    '--restore',
+    metavar="DEST",
+    default=None,
+    help='Extracts the backup')
+parser.add_argument(
+    '--validate',
+    action='store_true',
+    default=False,
+    help='Validate the backup without restoring')
+parser.add_argument(
+    '--repair',
+    action='store_true',
+    default=False,
+    help='Attempt to repair damaged archive using parity')
+parser.add_argument(
+    '--list',
+    action='store_true',
+    default=False,
+    help='List contents of backup (will not extract)')
+parser.add_argument(
+    '--lastbackup',
+    metavar='LAST',
+    help='If set, requires the backup to be the successor of LAST')
+parser.add_argument(
+    '--force',
+    action='store_true',
+    default=False,
+    help='Even if manifest is missing, it will at least try to verify and repair archive')
+parser.add_argument(
+    '--config',
+    metavar="CONFIG",
+    default=None,
+    help="Configuration file to load (optional)")
+parser.add_argument(
+    '--passphrase',
+    metavar='PW',
+    default=None,
+    help='Decrypt using supplied passphrase')
+parser.add_argument(
+    'backup',
+    metavar="BACKUP",
+    help="Path to backup prefix or file")
 cmdline = parser.parse_args()
 
-""" Setup logging first """
+# Setup logging
 logging.getLogger('').handlers = []
-loglevel=logging.INFO
+LOG_LEVEL = logging.INFO
 if cmdline.logfile:
-  logformat=u'%(asctime)s - %(levelname)s - %(message)s'
+    LOG_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
 else:
-  logformat=u'%(message)s'
+    LOG_FORMAT = '%(message)s'
 if cmdline.debug:
-  loglevel=logging.DEBUG
-  logformat=u'%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s'
+    LOG_LEVEL = logging.DEBUG
+    LOG_FORMAT = '%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s'
 
-logging.basicConfig(stream=sys.stdout, filename=cmdline.logfile, level=loglevel, format=logformat)
+if cmdline.logfile:
+    logging.basicConfig(
+        filename=cmdline.logfile,
+        level=LOG_LEVEL,
+        format=LOG_FORMAT)
+else:
+    logging.basicConfig(
+        stream=sys.stdout,
+        level=LOG_LEVEL,
+        format=LOG_FORMAT)
 logging.getLogger("gnupg").setLevel(logging.WARNING)
 logging.getLogger("shutil").setLevel(logging.WARNING)
 
 # Make sure we have the correct gnupg module
-if not "encrypt_file" in dir(gnupg.GPG()):
-  logging.error("Current GnuPG python module does not support file encryption, please check FAQ section in documentation")
-  sys.exit(255)
+if "encrypt_file" not in dir(gnupg.GPG()):
+    logging.error(
+        "Current GnuPG python module does not support file encryption, please check FAQ section in documentation")
+    sys.exit(255)
 
 #######################
 
 config = {}
 if cmdline.config:
-  config = configuration.parse(cmdline.config, True)
-  if config is None:
-    logging.error("Configuration is broken, please check %s" % cmdline.config)
-    sys.exit(1)
+    config = configuration.parse(cmdline.config, True)
+    if config is None:
+        logging.error(
+            'Configuration is broken, please check %s',
+            cmdline.config)
+        sys.exit(1)
 else:
-  config = {}
+    config = {}
 if cmdline.passphrase:
-  config['encrypt-pw'] = cmdline.passphrase
-
+    config['encrypt-pw'] = cmdline.passphrase
 
 
 basepath, files = getBackupFiles(cmdline.backup)
 
-fileManifest = None
-fileArchive = None
+file_manifest = None
+file_archive = None
 
-fileParity = None
+file_parity = None
 filelist = None
-oldfilelist = False
-corruptFiles = []
-processedFiles = []
-skipParity = False
+old_filelist = False
+corrupt_files = []
+processed_files = []
 
 for f in files:
-  if ".json" in f:
-    fileManifest = f
-  elif ".par2" in f:
-    fileParity = f
-  elif ".tar" in f:
-    fileArchive = f
-  elif f.endswith(".lst"):
-    filelist = f
-  elif f == "filelist.txt":
-    oldfilelist = True
+    if ".json" in f:
+        file_manifest = f
+    elif ".par2" in f:
+        file_parity = f
+    elif ".tar" in f:
+        file_archive = f
+    elif f.endswith(".lst"):
+        filelist = f
+    elif f == "filelist.txt":
+        old_filelist = True
 
-if fileManifest is None:
-  if cmdline.force:
-    logging.error("No manifest found, unable to restore. Will try to verify and repair if needed")
-  else:
-    logging.error("No manifest found, unable to restore (use --force to do as much as possible)")
+if file_manifest is None:
+    if cmdline.force:
+        logging.error(
+            "No manifest found, unable to restore. Will try to verify and repair if needed")
+    else:
+        logging.error(
+            "No manifest found, unable to restore (use --force to do as much as possible)")
+        sys.exit(1)
+if file_archive is None:
+    logging.error("No archive found, unable to continue")
     sys.exit(1)
-if fileArchive is None:
-  logging.error("No archive found, unable to continue")
-  sys.exit(1)
 
-if fileManifest is not None:
-  logging.debug('Using manifest "%s"' % fileManifest)
-if fileParity is not None:
-  logging.debug("Parity is available")
+if file_manifest is not None:
+    logging.debug('Using manifest "%s"', file_manifest)
+if file_parity is not None:
+    logging.debug("Parity is available")
 
 # If we have a filelist, use it to confirm files
-if filelist and not validArchive(basepath, filelist, corruptFiles, files) and not cmdline.force:
-  sys.exit(1)
-elif oldfilelist:
-  logging.warn('Using older "filelist.txt" instead of new format using file ending in ".lst"')
-  if not validArchive(basepath, "filelist.txt", corruptFiles, files) and not cmdline.force:
+if filelist and not validArchive(
+        basepath,
+        filelist,
+        corrupt_files,
+        files) and not cmdline.force:
     sys.exit(1)
+elif old_filelist:
+    logging.warning(
+        'Using older "filelist.txt" instead of new format using file ending in ".lst"')
+    if not validArchive(
+        basepath,
+        "filelist.txt",
+        corrupt_files,
+            files) and not cmdline.force:
+        sys.exit(1)
 
 
 # Strip all files except archive (ie, verify signature and decrypt)
@@ -257,147 +332,164 @@ elif oldfilelist:
 do_manifest = cmdline.list or cmdline.restore or cmdline.validate
 
 for f in files:
-  if f in corruptFiles:
-    continue
-  if f == fileArchive:
-    continue
-  if not validateFile(os.path.join(basepath, f)):
-    logging.error('File "%s" signature does not match' % f)
-    if not cmdline.force:
-      sys.exit(1)
+    if f in corrupt_files:
+        continue
+    if f == file_archive:
+        continue
+    if not validateFile(os.path.join(basepath, f)):
+        logging.error('File "%s" signature does not match', f)
+        if not cmdline.force:
+            sys.exit(1)
 
-  # Do not extract files we don't need (ie, when not extracting)
-  if not do_manifest:
-    continue
+    # Do not extract files we don't need (ie, when not extracting)
+    if not do_manifest:
+        continue
 
-  if f != fileManifest and not cmdline.restore:
-    continue
+    if f != file_manifest and not cmdline.restore:
+        continue
 
-  n = stripFile(os.path.join(basepath, f))
-  if n is None:
-    logging.error('Unable to process "%s"' % f)
-    sys.exit(1)
-  else:
-    processedFiles.append(n)
-    if n.endswith('.json'):
-      fileManifest = n
+    n = stripFile(os.path.join(basepath, f))
+    if n is None:
+        logging.error('Unable to process "%s"', f)
+        sys.exit(1)
+    else:
+        processed_files.append(n)
+        if n.endswith('.json'):
+            file_manifest = n
 
 if not do_manifest:
-  sys.exit(0)
+    sys.exit(0)
 
-if (cmdline.restore or cmdline.repair) and fileParity is not None and len(corruptFiles) > 0:
-  logging.info('Repairing corrupted archive file "%s"' % fileArchive)
-  for f in processedFiles:
-    if f.endswith(fileArchive + '.par2'):
-      if not fileutils.repairParity(f):
-        logging.error("Failed to repair file, not enough parity material")
-        sys.exit(1)
-      else:
-        logging.info('File was repaired successfully')
-      break
+if (cmdline.restore or cmdline.repair) and file_parity is not None and len(
+        corrupt_files) > 0:
+    logging.info('Repairing corrupted archive file "%s"', file_archive)
+    for f in processed_files:
+        if f.endswith(file_archive + '.par2'):
+            if not fileutils.repairParity(f):
+                logging.error(
+                    "Failed to repair file, not enough parity material")
+                sys.exit(1)
+            else:
+                logging.info('File was repaired successfully')
+            break
 
 # Strip the archive
 if cmdline.restore:
-  if not validateFile(os.path.join(basepath, fileArchive)):
-    logging.error('File "%s" signature does not match' % fileArchive)
-    if not cmdline.force:
-      sys.exit(1)
-  archive = stripFile(os.path.join(basepath, fileArchive))
-  if archive is None:
-    logging.error('Unable to process "%s"' % fileArchive)
-    sys.exit(1)
+    if not validateFile(os.path.join(basepath, file_archive)):
+        logging.error('File "%s" signature does not match', file_archive)
+        if not cmdline.force:
+            sys.exit(1)
+    archive = stripFile(os.path.join(basepath, file_archive))
+    if archive is None:
+        logging.error('Unable to process "%s"', file_archive)
+        sys.exit(1)
 
 
-if fileManifest is None:
-  logging.info('This is as much as can be done. You can now manually extract the files')
-  sys.exit(0)
+if file_manifest is None:
+    logging.info(
+        'This is as much as can be done. You can now manually extract the files')
+    sys.exit(0)
 
 # And now... restore
 manifest = None
-with open(fileManifest) as fp:
-  manifest = json.load(fp)
+with open(file_manifest, encoding='utf-8') as fp:
+    manifest = json.load(fp)
 
 # If last backup is defined, check it
 if cmdline.lastbackup is not None:
-  if 'lastbackup' not in manifest:
-    logging.debug('This backup does not specify a previous backup (made with an older version of iceshelf)')
-  if 'lastbackup' not in manifest or manifest['lastbackup'] != cmdline.lastbackup:
-    logging.error('Backup "%s" is not the successor of "%s"' % (os.path.basename(fileManifest)[0:-5], cmdline.lastbackup))
-    sys.exit(1)
+    if 'lastbackup' not in manifest:
+        logging.debug(
+            'This backup does not specify a previous backup (made with an older version of iceshelf)')
+    if 'lastbackup' not in manifest or manifest['lastbackup'] != cmdline.lastbackup:
+        logging.error(
+            'Backup "%s" is not the successor of "%s"',
+            os.path.basename(file_manifest)[0:-5],
+            cmdline.lastbackup)
+        sys.exit(1)
 
 # If available, show which backup that preceeded it
 if cmdline.list:
-  if 'lastbackup' in manifest:
-    logging.info('Manifest: Parent backup is "%s"' % manifest['lastbackup'])
-  else:
-    logging.debug('Manifest: Does not contain parent reference')
+    if 'lastbackup' in manifest:
+        logging.info(
+            'Manifest: Parent backup is "%s"',
+            manifest['lastbackup'])
+    else:
+        logging.debug('Manifest: Does not contain parent reference')
 
 # Now, print the files we're changing or creating
 filecount = 0
 fileerror = 0
 for k in manifest['modified']:
-  v = manifest['modified'][k]
-  src = os.path.normpath(cmdline.restore + k)
-  if cmdline.list:
-    logging.info('Manifest: Modified or new file "%s" in "%s"' % (os.path.basename(k), os.path.dirname(k)))
-  filecount += 1
+    v = manifest['modified'][k]
+    src = os.path.normpath(cmdline.restore + k)
+    if cmdline.list:
+        logging.info(
+            'Manifest: Modified or new file "%s" in "%s"',
+            os.path.basename(k),
+            os.path.dirname(k))
+    filecount += 1
 
 # Iterate the archive and make sure we know what's in it
 if cmdline.restore:
-  with tarfile.open(archive, "r:*") as tar:
-    item = tar.next()
-    while item != None:
-      if '/' + item.name not in manifest['modified']:
-        logging.error('Archive contains "%s", not listed in the manifest' % item.name)
-        fileerror += 1
-      else:
-        manifest['modified']['/' + item.name]['found'] = True
-        filecount -= 1
-      item = tar.next()
+    with tarfile.open(archive, "r:*") as tar:
+        item = tar.next()
+        while item is not None:
+            if '/' + item.name not in manifest['modified']:
+                logging.error(
+                    'Archive contains "%s", not listed in the manifest',
+                    item.name)
+                fileerror += 1
+            else:
+                manifest['modified']['/' + item.name]['found'] = True
+                filecount -= 1
+            item = tar.next()
 
-  # Check that all files we were looking for was in the archive
-  for k in manifest['modified']:
-    if not 'found' in manifest['modified'][k]:
-      logging.error('Archive is missing "%s"' % k)
-      fileerror += 1
+    # Check that all files we were looking for was in the archive
+    for k in manifest['modified']:
+        if 'found' not in manifest['modified'][k]:
+            logging.error('Archive is missing "%s"', k)
+            fileerror += 1
 
-  if fileerror != 0 or filecount != 0:
-    logging.error("Archive contains errors, aborting")
-    sys.exit(1)
+    if fileerror != 0 or filecount != 0:
+        logging.error("Archive contains errors, aborting")
+        sys.exit(1)
 
 # Step 1: Remove any files that were deleted
 for f in manifest['deleted']:
-  src = os.path.normpath(cmdline.restore + f)
-  if cmdline.list:
-    logging.info('Manifest: Deleting "%s"' % src)
-  if cmdline.restore:
-    try:
-      os.unlink(src)
-    except OSError as e:
-      logging.warning('Unable to remove "%s": %s', src, e)
+    src = os.path.normpath(cmdline.restore + f)
+    if cmdline.list:
+        logging.info('Manifest: Deleting "%s"', src)
+    if cmdline.restore:
+        try:
+            os.unlink(src)
+        except OSError as e:
+            logging.warning('Unable to remove "%s": %s', src, e)
 
 for k in manifest['moved']:
-  v = manifest['moved'][k]
-  src = os.path.normpath(cmdline.restore + v['original'])
-  dst = os.path.normpath(cmdline.restore + k)
-  if cmdline.list:
-    logging.info('Manifest: Moving "%s" to "%s"' % (src, dst))
-  if cmdline.restore:
-    try:
-      os.rename(src, dst)
-    except OSError as e:
-      logging.warning('Unable to move "%s" to "%s": %s', src, dst, e)
+    v = manifest['moved'][k]
+    src = os.path.normpath(cmdline.restore + v['original'])
+    dst = os.path.normpath(cmdline.restore + k)
+    if cmdline.list:
+        logging.info('Manifest: Moving "%s" to "%s"', src, dst)
+    if cmdline.restore:
+        try:
+            os.rename(src, dst)
+        except OSError as e:
+            logging.warning('Unable to move "%s" to "%s": %s', src, dst, e)
 
 # Finally, if not a dryrun
 if not cmdline.restore:
-  sys.exit(0)
+    sys.exit(0)
 
 # Time to extract the files
 with tarfile.open(archive, "r:*") as tar:
-  item = tar.next()
-  while item != None:
-    filename = os.path.normpath(cmdline.restore + "/" + item.name)
-    logging.info('Extracting "%s" to "%s"' % (os.path.basename(filename), os.path.dirname(filename)))
-    tar.extract(item, cmdline.restore)
     item = tar.next()
+    while item is not None:
+        filename = os.path.normpath(cmdline.restore + "/" + item.name)
+        logging.info(
+            'Extracting "%s" to "%s"',
+            os.path.basename(filename),
+            os.path.dirname(filename))
+        tar.extract(item, cmdline.restore)
+        item = tar.next()
 logging.info("Backup has been restored")
