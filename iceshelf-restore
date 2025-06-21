@@ -359,9 +359,9 @@ elif old_filelist:
         sys.exit(1)
 
 
-# Strip all files except archive (ie, verify signature and decrypt)
+# Strip all files except the archive (verify signatures and decrypt)
 # since archive might need repairs and for that we need PAR2
-logging.info('Validating backup files')
+logging.info('Validating metadata files')
 do_manifest = cmdline.list or cmdline.restore or cmdline.validate
 
 for f in files:
@@ -408,6 +408,7 @@ if (cmdline.restore or cmdline.repair) and file_parity is not None and len(
 # Strip the archive
 if cmdline.restore:
     logging.info('Preparing to restore files to "%s"', cmdline.restore)
+    logging.info('Validating archive file "%s"', file_archive)
     if not validate_file(os.path.join(basepath, file_archive)):
         logging.error('File "%s" signature does not match', file_archive)
         if not cmdline.force:
