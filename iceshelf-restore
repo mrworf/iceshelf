@@ -55,7 +55,7 @@ def validArchive(baseDir, filelist, corrupt_files, files):
                         paritycount += 1
                 else:
                     logging.error(
-                        'File "%s" is missing from backup' %
+                        'File "%s" is missing from backup',
                         res.group(2))
                     return False
             else:
@@ -67,22 +67,23 @@ def validArchive(baseDir, filelist, corrupt_files, files):
     elif archivecorrupt:
         logging.warning(
             'Archive is corrupt, but parity is available making repair a possibility')
-    return criticalerror == False
+    return not criticalerror
 
 
-def validateFile(filename):
+def validate_file(filename):
+    """Verify GPG signatures when present."""
     gpg = gnupg.GPG()
 
     logging.debug('Validating "%s"', filename)
 
     if filename.endswith('.sig') or filename.endswith('.asc'):
-        verification = None
-        with open(filename, 'rb') as f:
-            verification = gpg.verify_file(f)
-        if verification is None or verification.trust_level < verification.TRUST_FULLY:
+        data_file = filename.rsplit('.', 1)[0]
+        with open(filename, 'rb') as sig_file:
+            verification = gpg.verify_file(sig_file, data_file)
+        if not verification or not verification.valid:
             logging.error(
-                "Signature isn't trusted (%s): %s",
-                verification.status,
+                'Signature verification failed (%s): %s',
+                getattr(verification, 'status', 'unknown'),
                 filename)
             return False
     return True
@@ -355,7 +356,7 @@ for f in files:
         continue
     if f == file_archive:
         continue
-    if not validateFile(os.path.join(basepath, f)):
+    if not validate_file(os.path.join(basepath, f)):
         logging.error('File "%s" signature does not match', f)
         if not cmdline.force:
             sys.exit(1)
@@ -395,7 +396,7 @@ if (cmdline.restore or cmdline.repair) and file_parity is not None and len(
 # Strip the archive
 if cmdline.restore:
     logging.info('Preparing to restore files to "%s"', cmdline.restore)
-    if not validateFile(os.path.join(basepath, file_archive)):
+    if not validate_file(os.path.join(basepath, file_archive)):
         logging.error('File "%s" signature does not match', file_archive)
         if not cmdline.force:
             sys.exit(1)
