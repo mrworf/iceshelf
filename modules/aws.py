@@ -138,7 +138,7 @@ class uploadJob:
     tf = tempfile.NamedTemporaryFile(dir='/tmp', delete=False)
     if tf is None:
       logging.error('Unable to generate temporary file')
-      return -1
+      raise RuntimeError('Unable to generate temporary file')
     self.tmpfile = tf.name
     tf.close()
 

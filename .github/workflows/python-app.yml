@@ -28,7 +28,7 @@ jobs:
         sudo apt-get install par2
         sudo apt-get install gnupg
         python -m pip install --upgrade pip
-        pip install flake8 pytest
+        pip install flake8 pytest pylint
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Lint with flake8
       run: |
@@ -37,6 +37,9 @@ jobs:
         #flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         #flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    - name: Lint with pylint
+      run: |
+        pylint modules iceshelf iceshelf-inspect iceshelf-restore iceshelf-retrieve --errors-only
     - name: Run testsuite
       run: |
         ./extras/testsuite/test.sh insecure
