@@ -1,9 +1,13 @@
-# testsuite
+# Backup and Restore tests
 
 A beginning to a suite of tests to confirm that the tool is doing the right thing.
 
-All the test cases are places inside `tests/` folder and essentially manipulate the
-content folder and then execute the `runTest` call.
+All backup test cases are stored inside the `tests/` directory. They manipulate
+the `content` folder and then execute `runTest` from `test_backup.sh`.
+
+`test_restore.sh` provides functional tests for `iceshelf-restore`. It exercises
+all permutations of encryption, signatures and parity while also verifying
+behavior when manifests are missing or archives are corrupt.
 
 runTest take the following arguments:
 
