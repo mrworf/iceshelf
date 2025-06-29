@@ -33,9 +33,12 @@ jobs:
     - name: Lint with pylint
       run: |
         pylint modules iceshelf iceshelf-inspect iceshelf-restore iceshelf-retrieve --errors-only
-    - name: Run testsuite
+    - name: Run backup tests
       run: |
-        ./extras/testsuite/test.sh insecure
+        ./extras/testsuite/test_backup.sh insecure
+    - name: Run restore tests
+      run: |
+        ./extras/testsuite/test_restore.sh
     #- name: Test with pytest
     #  run: |
     #    pytest
