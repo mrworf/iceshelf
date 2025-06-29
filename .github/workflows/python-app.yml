@@ -35,10 +35,10 @@ jobs:
         pylint modules iceshelf iceshelf-inspect iceshelf-restore iceshelf-retrieve --errors-only
     - name: Run backup tests
       run: |
-        ./extras/testsuite/test_backup.sh insecure
+        bash extras/testsuite/test_backup.sh insecure
     - name: Run restore tests
       run: |
-        ./extras/testsuite/test_restore.sh
+        bash extras/testsuite/test_restore.sh
     #- name: Test with pytest
     #  run: |
     #    pytest

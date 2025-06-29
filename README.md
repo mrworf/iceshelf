@@ -514,5 +514,5 @@ extend the suite if needed to cover any specific testcase which was previously
 missed.
 
 The tests rely on the `par2` and `gpg` tools being available in the PATH, so
-make sure they are installed before running `extras/testsuite/test_backup.sh`
-and `extras/testsuite/test_restore.sh`.
+make sure they are installed before running `bash extras/testsuite/test_backup.sh`
+and `bash extras/testsuite/test_restore.sh`.
