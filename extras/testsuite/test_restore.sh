@@ -135,7 +135,8 @@ CONF
 
   # Restore using the manifest path and verify the result matches
   ../../iceshelf-restore --restore restore "$MANIFEST"
-  if ! diff -r content restore/workspace/iceshelf/extras/testsuite/content >diff.out; then
+  DEST="restore$(pwd)/content"
+  if ! diff -r content "$DEST" >diff.out; then
     echo "Mismatch after manifest restore"
     cat diff.out
     exit 1
@@ -144,7 +145,8 @@ CONF
 
   # Restore using the prefix notation (no manifest) and verify again
   ../../iceshelf-restore --restore restore2 "$PREFIX"
-  if ! diff -r content restore2/workspace/iceshelf/extras/testsuite/content >diff.out; then
+  DEST2="restore2$(pwd)/content"
+  if ! diff -r content "$DEST2" >diff.out; then
     echo "Mismatch after prefix restore"
     cat diff.out
     exit 1
