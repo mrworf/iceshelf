@@ -118,7 +118,7 @@ In order to be able to run this, you need a few other parts installed.
 - python-gnupg - Encryption & Signature (NOT `gnupg`, it's `python-gnupg`)
   Ubuntu comes with a version, but unfortunately it's too old. You should install this using the `pip3` tool to make sure you get a current version.
 - par2 - Parity tool
-- aws - In order to upload archives to AWS services such as S3 or Glacier
+- boto3 - AWS SDK for Python used to upload archives
 
 ### Installing on Ubuntu
 
@@ -138,9 +138,10 @@ This is the simple version which points out what commands to run. Please conside
   sudo apt-get install par2
   ```
 
-4. AWS CLI
-  Install the `aws` command by following the official instructions:
-  <https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html>
+4. boto3
+  ```
+  sudo -H pip3 install boto3
+  ```
 
 For more details, see the [step-by-step guide](https://github.com/mrworf/iceshelf/wiki) in the wiki.
 

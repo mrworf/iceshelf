@@ -1,7 +1,8 @@
 import os
-import subprocess
 import logging
-from . import BackupProvider, _which
+import boto3
+from botocore.exceptions import ClientError
+from . import BackupProvider
 
 class S3Provider(BackupProvider):
     name = 's3'
@@ -11,8 +12,9 @@ class S3Provider(BackupProvider):
         if not self.bucket:
             logging.error('s3 provider requires "bucket"')
             return False
-        if _which('aws') is None:
-            logging.error('aws command not found')
+        session = boto3.Session()
+        if session.get_credentials() is None:
+            logging.error('AWS credentials not configured')
             return False
         return True
 
@@ -21,16 +23,12 @@ class S3Provider(BackupProvider):
         return f's3:{self.bucket}{prefix}'
 
     def upload_files(self, files):
+        client = boto3.client('s3')
         for f in files:
             key = os.path.join(self.prefix, os.path.basename(f))
-            cmd = ['aws', 's3', 'cp', f, f's3://{self.bucket}/{key}']
             try:
-                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                out, err = p.communicate()
-                if p.returncode != 0:
-                    logging.error('aws s3 cp failed: %s', err)
-                    return False
-            except Exception:
-                logging.exception('aws s3 cp failed for %s', f)
+                client.upload_file(f, self.bucket, key)
+            except ClientError:
+                logging.exception('S3 upload failed for %s', f)
                 return False
         return True

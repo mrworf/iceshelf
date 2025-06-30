@@ -1,3 +1,2 @@
 python-gnupg
-awscli
 boto3
