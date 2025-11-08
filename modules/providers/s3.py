@@ -8,6 +8,7 @@ class S3Provider(BackupProvider):
     def verify(self):
         self.bucket = self.options.get('bucket')
         self.prefix = self.options.get('prefix', '')
+        self.storage_class = self.options.get('storage_class')
         if not self.bucket:
             logging.error('s3 provider requires "bucket"')
             return False
@@ -24,6 +25,9 @@ class S3Provider(BackupProvider):
         for f in files:
             key = os.path.join(self.prefix, os.path.basename(f))
             cmd = ['aws', 's3', 'cp', f, f's3://{self.bucket}/{key}']
+            if self.storage_class:
+                cmd.append('--storage-class')
+                cmd.append(str(self.storage_class))
             try:
                 p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 out, err = p.communicate()
