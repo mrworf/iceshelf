@@ -1,3 +1,4 @@
 python-gnupg
 awscli
 boto3
+PyYAML

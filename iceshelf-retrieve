@@ -12,22 +12,120 @@ import json
 import os
 import re
 import sys
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 
 import boto3
+import yaml
+from botocore.exceptions import ClientError, NoCredentialsError, NoRegionError
 
 from modules import aws
 
 
 STATE_VERSION = 1
 
+# Sentinel put on the download queue to tell workers to exit
+_DOWNLOAD_QUEUE_SENTINEL = None
 
-def ensure_inventory(client, vault, datadir):
+AWS_CONFIG_KEYS = (
+    "region",
+    "access_key_id",
+    "secret_access_key",
+    "session_token",
+    "profile",
+    "endpoint_url",
+)
+
+
+def load_aws_config_file(path):
+    """Load AWS config from a YAML file. Returns a dict with only known keys."""
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    return {k: data[k] for k in AWS_CONFIG_KEYS if k in data and data[k] is not None}
+
+
+def merge_aws_config(file_config, args):
+    """Merge file config with CLI args. CLI overrides. Returns dict for boto3."""
+    merged = dict(file_config)
+    if getattr(args, "aws_region", None):
+        merged["region"] = args.aws_region
+    if getattr(args, "aws_access_key_id", None):
+        merged["access_key_id"] = args.aws_access_key_id
+    if getattr(args, "aws_secret_access_key", None):
+        merged["secret_access_key"] = args.aws_secret_access_key
+    if getattr(args, "aws_session_token", None):
+        merged["session_token"] = args.aws_session_token
+    if getattr(args, "aws_profile", None):
+        merged["profile"] = args.aws_profile
+    if getattr(args, "aws_endpoint_url", None):
+        merged["endpoint_url"] = args.aws_endpoint_url
+    return merged
+
+
+def create_glacier_client(aws_config):
+    """Create a boto3 Glacier client from merged config. Returns (client, None) or (None, error_msg)."""
+    region = aws_config.get("region")
+    access_key_id = aws_config.get("access_key_id")
+    secret_access_key = aws_config.get("secret_access_key")
+    session_token = aws_config.get("session_token")
+    profile = aws_config.get("profile")
+    endpoint_url = aws_config.get("endpoint_url")
+
+    if not region:
+        return (
+            None,
+            "AWS region is required. Use: --aws-region us-east-1 (or set 'region' in config file).",
+        )
+    has_explicit_creds = access_key_id and secret_access_key
+    if not has_explicit_creds and not profile:
+        return (
+            None,
+            "AWS credentials required. Use: --aws-access-key-id KEY --aws-secret-access-key SECRET (or set in config file), or --aws-profile NAME.",
+        )
+
+    try:
+        if has_explicit_creds:
+            session = boto3.Session(
+                aws_access_key_id=access_key_id,
+                aws_secret_access_key=secret_access_key,
+                aws_session_token=session_token,
+                region_name=region,
+            )
+        else:
+            session = boto3.Session(profile_name=profile, region_name=region)
+        client_kwargs = {"service_name": "glacier", "region_name": region}
+        if endpoint_url:
+            client_kwargs["endpoint_url"] = endpoint_url
+        client = session.client(**client_kwargs)
+        return (client, None)
+    except NoRegionError:
+        return (
+            None,
+            "AWS region is required. Use: --aws-region REGION (or set 'region' in config file).",
+        )
+    except NoCredentialsError:
+        return (
+            None,
+            "AWS credentials required. Use: --aws-access-key-id and --aws-secret-access-key (or set in config file), or --aws-profile NAME.",
+        )
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "Unknown")
+        return (
+            None,
+            f"AWS error ({code}). Check vault name, permissions, and network.",
+        )
+    except Exception as e:
+        return (None, str(e))
+
+
+def ensure_inventory(client, vault, datadir, wait_until_ready=False, poll_interval_secs=900):
     """Ensure a recent inventory is available.
 
     Returns a dictionary mapping archive description to information or None if
-    the inventory is still being prepared.
+    the inventory is still being prepared (and wait_until_ready is False).
     """
     inv_file = os.path.join(datadir, "glacier_inventory.json")
     job_file = os.path.join(datadir, "glacier_inventory.job")
@@ -49,9 +147,19 @@ def ensure_inventory(client, vault, datadir):
             job_id = f.read().strip()
         logging.info("Checking status of inventory job %s", job_id)
         status = client.describe_job(vaultName=vault, jobId=job_id)
-        if not status.get("Completed"):
-            logging.info("Inventory job not ready yet. Please rerun later.")
-            return None
+        while not status.get("Completed"):
+            if not wait_until_ready:
+                logging.info(
+                    "Inventory job not ready yet. Please rerun later."
+                    " Use --wait to have the tool wait until the inventory is ready."
+                )
+                return None
+            interval_mins = poll_interval_secs // 60
+            logging.info(
+                "Waiting for inventory job (polling every %d minutes)...", interval_mins
+            )
+            time.sleep(poll_interval_secs)
+            status = client.describe_job(vaultName=vault, jobId=job_id)
         logging.info("Downloading inventory ...")
         out = client.get_job_output(vaultName=vault, jobId=job_id)
         body = out["body"].read()
@@ -74,13 +182,39 @@ def ensure_inventory(client, vault, datadir):
         vaultName=vault,
         jobParameters={"Type": "inventory-retrieval"},
     )
+    job_id = resp["jobId"]
     with open(job_file, "w", encoding="utf-8") as f:
-        f.write(resp["jobId"])
-    logging.info(
-        "Inventory retrieval job %s started. Rerun the tool once it completes.",
-        resp["jobId"],
-    )
-    return None
+        f.write(job_id)
+    if not wait_until_ready:
+        logging.info(
+            "Inventory retrieval job %s started. Rerun the tool once it completes.",
+            job_id,
+        )
+        return None
+    # Fall through to poll for the job we just started
+    status = client.describe_job(vaultName=vault, jobId=job_id)
+    while not status.get("Completed"):
+        interval_mins = poll_interval_secs // 60
+        logging.info(
+            "Waiting for inventory job (polling every %d minutes)...", interval_mins
+        )
+        time.sleep(poll_interval_secs)
+        status = client.describe_job(vaultName=vault, jobId=job_id)
+    logging.info("Downloading inventory ...")
+    out = client.get_job_output(vaultName=vault, jobId=job_id)
+    body = out["body"].read()
+    with open(inv_file, "wb") as f:
+        f.write(body)
+    os.remove(job_file)
+    data = json.loads(body.decode("utf-8"))
+    mapping = {}
+    for a in data.get("ArchiveList", []):
+        mapping[a.get("ArchiveDescription")] = {
+            "archiveId": a.get("ArchiveId"),
+            "size": a.get("Size"),
+            "checksum": a.get("SHA256TreeHash"),
+        }
+    return mapping
 
 
 def load_state(path):
@@ -165,6 +299,29 @@ def download_job(client, vault, entry, destdir):
     logging.info("Finished %s", entry["name"])
 
 
+def download_worker(
+    download_queue,
+    client,
+    vault,
+    destdir,
+    state_lock,
+    save_state_fn,
+):
+    """Worker that pulls (entry, state_file, state) from the queue, downloads, and persists state."""
+    while True:
+        item = download_queue.get()
+        if item is _DOWNLOAD_QUEUE_SENTINEL:
+            download_queue.task_done()
+            break
+        entry, state_file, state = item
+        try:
+            download_job(client, vault, entry, destdir)
+        finally:
+            with state_lock:
+                save_state_fn(state_file, state)
+        download_queue.task_done()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Iceshelf Retrieve - Download backups from Glacier",
@@ -190,9 +347,63 @@ def main():
     parser.add_argument(
         "--threads", type=int, default=2, help="Number of parallel downloads"
     )
+    parser.add_argument(
+        "--wait",
+        action="store_true",
+        help="Wait (poll AWS) until inventory and archive jobs are ready instead of exiting; use with --wait-interval to tune poll interval.",
+    )
+    parser.add_argument(
+        "--wait-interval",
+        type=int,
+        default=900,
+        metavar="SECS",
+        help="Seconds between polls when using --wait (default: 900)",
+    )
     parser.add_argument("--logfile", metavar="FILE", help="Log to file instead of stdout")
     parser.add_argument(
         "--debug", action="store_true", default=False, help="Enable debug logging"
+    )
+    parser.add_argument(
+        "--aws-region",
+        dest="aws_region",
+        metavar="REGION",
+        help="AWS region (e.g. us-east-1). Required unless set in --aws-config file.",
+    )
+    parser.add_argument(
+        "--aws-access-key-id",
+        dest="aws_access_key_id",
+        metavar="KEY",
+        help="AWS access key ID. Use with --aws-secret-access-key, or set in --aws-config.",
+    )
+    parser.add_argument(
+        "--aws-secret-access-key",
+        dest="aws_secret_access_key",
+        metavar="SECRET",
+        help="AWS secret access key. Use with --aws-access-key-id, or set in --aws-config.",
+    )
+    parser.add_argument(
+        "--aws-session-token",
+        dest="aws_session_token",
+        metavar="TOKEN",
+        help="AWS session token (optional; for temporary credentials).",
+    )
+    parser.add_argument(
+        "--aws-profile",
+        dest="aws_profile",
+        metavar="NAME",
+        help="AWS profile name (alternative to access key/secret).",
+    )
+    parser.add_argument(
+        "--aws-config",
+        dest="aws_config",
+        metavar="FILE",
+        help="Path to YAML config file with region, access_key_id, secret_access_key, etc.",
+    )
+    parser.add_argument(
+        "--aws-endpoint-url",
+        dest="aws_endpoint_url",
+        metavar="URL",
+        help="Custom Glacier endpoint URL (optional; e.g. for testing).",
     )
     args = parser.parse_args()
 
@@ -210,10 +421,38 @@ def main():
     datadir = os.path.dirname(db_path) if db_path else args.dest
     os.makedirs(datadir, exist_ok=True)
 
-    client = boto3.client("glacier")
+    file_config = load_aws_config_file(args.aws_config)
+    aws_config = merge_aws_config(file_config, args)
+    client, err = create_glacier_client(aws_config)
+    if err:
+        logging.error("%s", err)
+        return 1
+
     vault = args.vault
 
-    inventory = ensure_inventory(client, vault, datadir)
+    try:
+        inventory = ensure_inventory(
+            client,
+            vault,
+            datadir,
+            wait_until_ready=args.wait,
+            poll_interval_secs=args.wait_interval,
+        )
+    except NoRegionError:
+        logging.error(
+            "AWS region is required. Use: --aws-region REGION (or set 'region' in config file)."
+        )
+        return 1
+    except NoCredentialsError:
+        logging.error(
+            "AWS credentials required. Use: --aws-access-key-id and --aws-secret-access-key (or set in config file), or --aws-profile NAME."
+        )
+        return 1
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "Unknown")
+        logging.error("AWS error (%s). Check vault name, permissions, and network.", code)
+        return 1
+
     if inventory is None:
         return 0
 
@@ -248,12 +487,11 @@ def main():
         targets = args.backup
 
     os.makedirs(args.dest, exist_ok=True)
+    destdir = args.dest
 
+    # Phase 1: For each backup, load state, sync with inventory, request all pending jobs.
     for backup in targets:
         files = backups_db[backup]
-
-        destdir = args.dest
-
         state_file = os.path.join(datadir, f"retrieve-{backup}.json")
         state = load_state(state_file)
 
@@ -279,30 +517,85 @@ def main():
             logging.info("All files for %s already retrieved", backup)
             continue
 
-        # Request jobs if needed
+        # After a crash, re-check entries that were "downloading"
+        for entry in state["files"].values():
+            if entry.get("status") == "downloading":
+                entry["status"] = "requested"
+
+        # Request jobs for all pending files (no workers yet)
         for entry in pending:
             if entry["jobId"] is None:
                 request_job(client, vault, entry)
         save_state(state_file, state)
 
-        # Check which jobs are ready
-        ready = [e for e in pending if e["jobId"]]
-        to_download = []
-        for entry in ready:
-            if check_job(client, vault, entry):
-                to_download.append(entry)
-        if not to_download:
-            logging.info("No files for %s are ready for download yet", backup)
-            save_state(state_file, state)
-            continue
+    # Phase 2: One producer over all backups; workers consume (entry, state_file, state).
+    all_states = []
+    for backup in targets:
+        state_file = os.path.join(datadir, f"retrieve-{backup}.json")
+        state = load_state(state_file)
+        if any(e["status"] != "done" for e in state["files"].values()):
+            all_states.append((state_file, state))
 
-        # Download ready files in parallel
-        with ThreadPoolExecutor(max_workers=args.threads) as exe:
-            futures = [exe.submit(download_job, client, vault, e, destdir) for e in to_download]
-            for fut in futures:
-                fut.result()
+    if not all_states:
+        logging.info("Done")
+        return 0
 
-        save_state(state_file, state)
+    state_lock = threading.Lock()
+    download_queue = Queue()
+    workers = [
+        threading.Thread(
+            target=download_worker,
+            args=(download_queue, client, vault, destdir, state_lock, save_state),
+        )
+        for _ in range(args.threads)
+    ]
+    for t in workers:
+        t.start()
+
+    # Producer: poll all in-flight jobs across all_states, enqueue ready as (entry, state_file, state)
+    while True:
+        to_check = []
+        for state_file, state in all_states:
+            for entry in state["files"].values():
+                if (
+                    entry["status"] not in ("done", "downloading")
+                    and entry.get("jobId")
+                ):
+                    to_check.append((entry, state_file, state))
+
+        if not to_check:
+            break
+
+        added = 0
+        for entry, state_file, state in to_check:
+            if entry["status"] == "ready" or check_job(client, vault, entry):
+                with state_lock:
+                    entry["status"] = "downloading"
+                    save_state(state_file, state)
+                download_queue.put((entry, state_file, state))
+                added += 1
+
+        if added == 0:
+            if not args.wait:
+                logging.info(
+                    "No files are ready for download yet."
+                    " Use --wait to have the tool wait until archives are ready."
+                )
+                for state_file, state in all_states:
+                    with state_lock:
+                        save_state(state_file, state)
+                break
+            interval_mins = args.wait_interval // 60
+            logging.info(
+                "Waiting for archives (polling every %d minutes)...", interval_mins
+            )
+            time.sleep(args.wait_interval)
+
+    # Signal workers to exit and wait for in-flight downloads to finish
+    for _ in range(args.threads):
+        download_queue.put(_DOWNLOAD_QUEUE_SENTINEL)
+    for t in workers:
+        t.join()
 
     logging.info("Done")
     return 0
