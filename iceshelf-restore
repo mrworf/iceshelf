@@ -222,9 +222,17 @@ def validate_file(filepath, gpg=None):
                 'Signature present but cannot validate (no public key in key file). '
                 'Rerun with --skip-signature to skip signature verification.')
             return False
+        verify_kw = {}
+        if getattr(gpg, 'gnupghome', None):
+            verify_kw['extra_args'] = ['--trust-model', 'always']
         try:
             with open(filepath, 'rb') as sig_file:
-                verification = gpg.verify_file(sig_file)
+                try:
+                    verification = gpg.verify_file(sig_file, **verify_kw)
+                except TypeError:
+                    verify_kw.pop('extra_args', None)
+                    sig_file.seek(0)
+                    verification = gpg.verify_file(sig_file, **verify_kw)
         except BrokenPipeError:
             logging.error(
                 'gpg verification failed: broken pipe (gpg exited early). '
@@ -294,13 +302,24 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None):
             if os.path.exists(next_path):
                 os.remove(next_path)
 
+        # When using ephemeral keyring (--key-file), pass --trust-model always so gpg
+        # does not require the key to be in the trustdb for signature verification.
+        decrypt_kw = {
+            'always_trust': True,
+            'passphrase': config.get('encrypt-pw'),
+            'output': next_path,
+        }
+        if getattr(gpg, 'gnupghome', None):
+            decrypt_kw['extra_args'] = ['--trust-model', 'always']
         try:
             with open(current, 'rb') as src_fh:
-                result = gpg.decrypt_file(
-                    src_fh,
-                    always_trust=True,
-                    passphrase=config.get('encrypt-pw'),
-                    output=next_path)
+                try:
+                    result = gpg.decrypt_file(src_fh, **decrypt_kw)
+                except TypeError:
+                    # Library may not support extra_args; retry without it (good_sig_untrusted handles outcome)
+                    decrypt_kw_retry = {k: v for k, v in decrypt_kw.items() if k != 'extra_args'}
+                    src_fh.seek(0)
+                    result = gpg.decrypt_file(src_fh, **decrypt_kw_retry)
         except BrokenPipeError:
             reason = (
                 'Broken pipe (gpg exited early). '
@@ -320,12 +339,22 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None):
             msg = stderr or status or 'gpg failed'
             summary = _gpg_failure_reason(msg) or 'GPG verification or decryption failed'
             signature_related = 'signature' in msg.lower()
+            # Decryption can succeed (file written) but gpg reports "untrusted key" and ok=False
+            good_sig_untrusted = (
+                signature_related
+                and 'good signature' in msg.lower()
+                and 'untrusted' in msg.lower()
+                and os.path.exists(next_path)
+                and os.path.getsize(next_path) > 0)
             skip_ok = (
                 signature_related
                 and config.get('skip_signature')
                 and getattr(result, 'returncode', None) == 0
                 and os.path.exists(next_path))
-            if skip_ok:
+            if good_sig_untrusted:
+                logging.debug(
+                    'Decryption succeeded (good signature, key untrusted in trustdb); continuing.')
+            elif skip_ok:
                 logging.warning(
                     'File "%s" lacked signature; --skip-signature is enabled, continuing.',
                     current)
@@ -1237,6 +1266,62 @@ if cmdline.key_file:
     if not has_private:
         logging.warning(
             'Cannot decrypt encrypted files, no private key provided in %s.', key_path)
+
+    # Set ultimate trust on imported keys so GPG can verify signatures (not just decrypt).
+    def _keyring_fingerprints(keyring_dir):
+        """Get primary key fingerprints from keyring via gpg --list-keys --with-colons."""
+        try:
+            result = subprocess.run(
+                ['gpg', '--no-tty', '--batch', '--list-keys', '--with-colons'],
+                env=dict(os.environ, GNUPGHOME=keyring_dir),
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return []
+            fingerprints = []
+            want_next_fpr = False
+            for line in (result.stdout or '').splitlines():
+                # Only fpr immediately after pub: or sec: (primary key), not after sub:
+                if line.startswith('pub:') or line.startswith('sec:'):
+                    want_next_fpr = True
+                    continue
+                if line.startswith('fpr:'):
+                    if want_next_fpr:
+                        parts = line.split(':')
+                        if len(parts) >= 10 and parts[9]:
+                            fingerprints.append(parts[9])
+                    want_next_fpr = False
+            return fingerprints
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+
+    fingerprints = getattr(import_result, 'fingerprints', None) or []
+    if not fingerprints:
+        fingerprints = _keyring_fingerprints(temp_keyring_dir)
+    if fingerprints:
+        if hasattr(restore_gpg, 'trust_keys'):
+            for fpr in fingerprints:
+                if fpr:
+                    try:
+                        restore_gpg.trust_keys(fpr, 'TRUST_ULTIMATE')
+                    except (AttributeError, TypeError, ValueError):
+                        pass
+        # Always run --import-ownertrust: trust_keys may not exist or may not affect gpg binary.
+        try:
+            ownertrust = ''.join('%s:6:\n' % f for f in fingerprints if f)
+            if ownertrust:
+                subprocess.run(
+                    ['gpg', '--no-tty', '--batch', '--import-ownertrust'],
+                    input=ownertrust.encode(),
+                    env=dict(os.environ, GNUPGHOME=temp_keyring_dir),
+                    capture_output=True,
+                    timeout=10,
+                    check=False,
+                )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
     def _sig_wipe_keyring(signum, frame):
         secure_wipe_temp_dir(temp_keyring_dir)
