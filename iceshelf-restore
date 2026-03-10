@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import gnupg
 from modules import configuration
 from modules import fileutils
@@ -272,11 +273,14 @@ def _gpg_failure_reason(stderr_text):
     return None
 
 
-def strip_file(filename, gpg=None, output_path=None, work_dir=None):
+def strip_file(filename, gpg=None, output_path=None, work_dir=None,
+              progress_interval=0, progress_original_size=None):
     """Strip signatures and decrypt files as needed.
     If output_path is given, the final stripped/decrypted file is written there.
     If work_dir is given, all intermediates and final output go under work_dir (read from source
     directly on first step to save space; never write or delete in the source directory).
+    When progress_interval > 0 and progress_original_size is set, a progress line is shown every
+    progress_interval seconds (after an initial delay of that length) during decryption.
     Returns (path, None) on success, (None, error_reason) on failure.
     """
     if gpg is None:
@@ -311,6 +315,30 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None):
         }
         if getattr(gpg, 'gnupghome', None):
             decrypt_kw['extra_args'] = ['--trust-model', 'always']
+
+        progress_thread = None
+        stop_progress = None
+        if progress_interval > 0 and progress_original_size is not None:
+            stop_progress = threading.Event()
+
+            def run_decrypt_progress():
+                time.sleep(progress_interval)
+                while not stop_progress.is_set():
+                    out_size = os.path.getsize(next_path) if os.path.exists(next_path) else 0
+                    out_mb = out_size / (1024 * 1024)
+                    orig_mb = progress_original_size / (1024 * 1024)
+                    if current.endswith('.sig') or current.endswith('.asc'):
+                        msg = '\r  Verifying signature... %.1f MB (original file %.1f MB)    '
+                    else:
+                        msg = '\r  Decrypted %.1f MB (original file %.1f MB)    '
+                    sys.stdout.write(msg % (out_mb, orig_mb))
+                    sys.stdout.flush()
+                    if stop_progress.wait(progress_interval):
+                        break
+
+            progress_thread = threading.Thread(target=run_decrypt_progress, daemon=True)
+            progress_thread.start()
+
         try:
             with open(current, 'rb') as src_fh:
                 try:
@@ -329,6 +357,10 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None):
         except OSError as exc:
             logging.error('Unable to decrypt "%s": %s', current, exc)
             return (None, str(exc))
+        finally:
+            if progress_thread is not None and stop_progress is not None:
+                stop_progress.set()
+                progress_thread.join()
         if result is None:
             logging.error('Unable to decrypt (unknown reason): %s', current)
             return (None, 'unknown reason')
@@ -401,6 +433,74 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None):
                 logging.warning('Could not remove temp file %s: %s', current, exc)
         return (output_path, None)
     return (current, None)
+
+
+class _ProgressFileReader:
+    """File-like wrapper that counts bytes read for progress reporting."""
+
+    def __init__(self, path):
+        self._file = open(path, 'rb')
+        self._bytes_read = 0
+
+    def read(self, size=-1):
+        data = self._file.read(size)
+        self._bytes_read += len(data)
+        return data
+
+    def readinto(self, b):
+        n = self._file.readinto(b)
+        if n is not None:
+            self._bytes_read += n
+        return n
+
+    def seek(self, offset, whence=os.SEEK_SET):
+        return self._file.seek(offset, whence)
+
+    def tell(self):
+        return self._file.tell()
+
+    def close(self):
+        return self._file.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self._file.close()
+
+
+def open_tar_with_progress(archive_path, archive_size_bytes, progress_interval=5):
+    """Open a tar archive (possibly compressed) with optional progress during the initial read.
+    If progress_interval > 0 and archive_size_bytes is not None, a progress line is shown every
+    progress_interval seconds (after an initial delay of that length) while the archive is read.
+    Returns a tarfile.TarFile; the caller should use it in a 'with' block.
+    """
+    if progress_interval <= 0 or archive_size_bytes is None:
+        return tarfile.open(archive_path, "r:*")
+
+    wrapper = _ProgressFileReader(archive_path)
+    stop_progress = threading.Event()
+
+    def run_open_progress():
+        time.sleep(progress_interval)
+        while not stop_progress.is_set():
+            out_mb = wrapper._bytes_read / (1024 * 1024)
+            orig_mb = archive_size_bytes / (1024 * 1024)
+            sys.stdout.write(
+                '\r  Opening compressed archive... %.1f MB read (archive %.1f MB)    '
+                % (out_mb, orig_mb))
+            sys.stdout.flush()
+            if stop_progress.wait(progress_interval):
+                break
+
+    progress_thread = threading.Thread(target=run_open_progress, daemon=True)
+    progress_thread.start()
+    try:
+        tar = tarfile.open(fileobj=wrapper, mode="r:*")
+        return tar
+    finally:
+        stop_progress.set()
+        progress_thread.join()
 
 
 def get_all_backup_basenames(base_dir):
@@ -923,17 +1023,24 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                 logging.info(
                     '  Decrypting archive for %s (may take several minutes for large files)...',
                     backup_id)
+                archive_original_size = os.path.getsize(archive_path)
                 fd, temp_path = tempfile.mkstemp(
                     suffix='.tar.bz2', prefix='iceshelf-restore.%s.' % backup_id, dir=restore_temp_dir)
                 os.close(fd)
                 try:
-                    stripped, strip_err = strip_file(archive_path, backup_gpg, output_path=temp_path, work_dir=restore_temp_dir)
+                    stripped, strip_err = strip_file(
+                        archive_path, backup_gpg, output_path=temp_path, work_dir=restore_temp_dir,
+                        progress_interval=5, progress_original_size=archive_original_size)
                     if stripped is None:
                         logging.error(
                             'Unable to process archive for "%s": %s',
                             backup_id, strip_err or 'decryption or signature verification failed')
                         sys.exit(1)
-                    with tarfile.open(stripped, "r:*") as tar:
+                    sys.stdout.write('\n')
+                    sys.stdout.flush()
+                    tar = open_tar_with_progress(
+                        stripped, os.path.getsize(stripped), progress_interval=5)
+                    with tar:
                         for restore_path, path_in_archive, checksum in by_backup[backup_id]:
                             dest_full = os.path.normpath(restore_base + restore_path)
                             decision, skip_reason = check_conflict(dest_full, checksum, conflict_mode)
@@ -1010,6 +1117,8 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                                 sys.stdout.write(
                                     '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
                                 sys.stdout.flush()
+                    sys.stdout.write('\n')
+                    sys.stdout.flush()
                 finally:
                     try:
                         if os.path.isfile(temp_path):
@@ -1523,12 +1632,19 @@ try:
             logging.error('File "%s" signature does not match', file_archive)
             if not cmdline.force:
                 sys.exit(1)
-        archive, strip_err = strip_file(os.path.join(basepath, file_archive), restore_gpg, work_dir=work_dir)
+        archive_path_full = os.path.join(basepath, file_archive)
+        archive_original_size = os.path.getsize(archive_path_full)
+        archive, strip_err = strip_file(
+            archive_path_full, restore_gpg, work_dir=work_dir,
+            progress_interval=5, progress_original_size=archive_original_size)
         if archive is None:
             logging.error(
                 'Unable to process "%s": %s',
                 file_archive, strip_err or 'decryption or signature verification failed')
             sys.exit(1)
+        sys.stdout.write('\n')
+        sys.stdout.flush()
+        archive_size = os.path.getsize(archive)
 
     if file_manifest is None:
         logging.info(
@@ -1607,7 +1723,8 @@ try:
 
     # Iterate the archive and make sure we know what's in it
     if cmdline.restore:
-        with tarfile.open(archive, "r:*") as tar:
+        tar = open_tar_with_progress(archive, archive_size, progress_interval=5)
+        with tar:
             item = tar.next()
             while item is not None:
                 if '/' + item.name not in manifest['modified']:
@@ -1619,6 +1736,8 @@ try:
                     manifest['modified']['/' + item.name]['found'] = True
                     filecount -= 1
                 item = tar.next()
+        sys.stdout.write('\n')
+        sys.stdout.flush()
 
         # Check that all files we were looking for was in the archive
         for k in manifest['modified']:
@@ -1669,7 +1788,8 @@ try:
     processed = 0
     try:
         try:
-            with tarfile.open(archive, "r:*") as tar:
+            tar = open_tar_with_progress(archive, archive_size, progress_interval=5)
+            with tar:
                 item = tar.next()
                 while item is not None:
                     target_path = os.path.normpath(restore_base + '/' + item.name)
@@ -1720,6 +1840,8 @@ try:
                             '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
                         sys.stdout.flush()
                     item = tar.next()
+            sys.stdout.write('\n')
+            sys.stdout.flush()
         except Exception:
             restore_failed_single = True
             raise
