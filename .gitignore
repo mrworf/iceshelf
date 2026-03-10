@@ -1,4 +1,8 @@
 dest/
+rst/
+*.gpg
+*.key
+*.asc
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
