@@ -122,8 +122,8 @@ def valid_archive(base_dir, list_file_path, corrupt_list, found_files):
         nonlocal bytes_done, last_pct
         pct = (100 * (bytes_done + file_done) // total_bytes) if total_bytes else 100
         if pct != last_pct:
-            sys.stdout.write('\rValidating archive, %d%% done    ' % pct)
-            sys.stdout.flush()
+            sys.stderr.write('\rValidating archive, %d%% done    ' % pct)
+            sys.stderr.flush()
             last_pct = pct
 
     try:
@@ -148,8 +148,8 @@ def valid_archive(base_dir, list_file_path, corrupt_list, found_files):
             elif ".par2" in line:
                 paritycount += 1
     finally:
-        sys.stdout.write('\n')
-        sys.stdout.flush()
+        sys.stderr.write('\n')
+        sys.stderr.flush()
 
     if archivecorrupt and paritycount == 0:
         logging.error('Archive is corrupt and no available parity files')
@@ -331,8 +331,8 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None,
                         msg = '\r  Verifying signature... %.1f MB (original file %.1f MB)    '
                     else:
                         msg = '\r  Decrypted %.1f MB (original file %.1f MB)    '
-                    sys.stdout.write(msg % (out_mb, orig_mb))
-                    sys.stdout.flush()
+                    sys.stderr.write(msg % (out_mb, orig_mb))
+                    sys.stderr.flush()
                     if stop_progress.wait(progress_interval):
                         break
 
@@ -486,10 +486,10 @@ def open_tar_with_progress(archive_path, archive_size_bytes, progress_interval=5
         while not stop_progress.is_set():
             out_mb = wrapper._bytes_read / (1024 * 1024)
             orig_mb = archive_size_bytes / (1024 * 1024)
-            sys.stdout.write(
+            sys.stderr.write(
                 '\r  Opening compressed archive... %.1f MB read (archive %.1f MB)    '
                 % (out_mb, orig_mb))
-            sys.stdout.flush()
+            sys.stderr.flush()
             if stop_progress.wait(progress_interval):
                 break
 
@@ -1002,8 +1002,8 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                     continue
                 # After the first archive, progress was updated with \r (no newline); start new line
                 if not verbose and total_files > 0 and ext_idx > 1:
-                    sys.stdout.write('\n')
-                    sys.stdout.flush()
+                    sys.stderr.write('\n')
+                    sys.stderr.flush()
                 n_files = len(by_backup[backup_id])
                 logging.info(
                     'Extracting from backup %d/%d: %s (%d file(s))',
@@ -1036,8 +1036,8 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                             'Unable to process archive for "%s": %s',
                             backup_id, strip_err or 'decryption or signature verification failed')
                         sys.exit(1)
-                    sys.stdout.write('\n')
-                    sys.stdout.flush()
+                    sys.stderr.write('\n')
+                    sys.stderr.flush()
                     tar = open_tar_with_progress(
                         stripped, os.path.getsize(stripped), progress_interval=5)
                     with tar:
@@ -1059,9 +1059,9 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                                 processed += 1
                                 if not verbose and total_files > 0:
                                     pct = 100 * processed // total_files
-                                    sys.stdout.write(
+                                    sys.stderr.write(
                                         '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
-                                    sys.stdout.flush()
+                                    sys.stderr.flush()
                                 continue
                             dirname = os.path.dirname(dest_full)
                             if dirname:
@@ -1114,11 +1114,11 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                             processed += 1
                             if not verbose and total_files > 0:
                                 pct = 100 * processed // total_files
-                                sys.stdout.write(
+                                sys.stderr.write(
                                     '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
-                                sys.stdout.flush()
-                    sys.stdout.write('\n')
-                    sys.stdout.flush()
+                                sys.stderr.flush()
+                    sys.stderr.write('\n')
+                    sys.stderr.flush()
                 finally:
                     try:
                         if os.path.isfile(temp_path):
@@ -1153,8 +1153,8 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
             invocation=' '.join(sys.argv))
 
     if not verbose and total_files > 0:
-        sys.stdout.write('\n')
-        sys.stdout.flush()
+        sys.stderr.write('\n')
+        sys.stderr.flush()
     logging.info('Multi-archive restore complete')
 
 
@@ -1640,10 +1640,10 @@ try:
         if archive is None:
             logging.error(
                 'Unable to process "%s": %s',
-                file_archive, strip_err or 'decryption or signature verification failed')
+                file_archive,             strip_err or 'decryption or signature verification failed')
             sys.exit(1)
-        sys.stdout.write('\n')
-        sys.stdout.flush()
+        sys.stderr.write('\n')
+        sys.stderr.flush()
         archive_size = os.path.getsize(archive)
 
     if file_manifest is None:
@@ -1736,8 +1736,8 @@ try:
                     manifest['modified']['/' + item.name]['found'] = True
                     filecount -= 1
                 item = tar.next()
-        sys.stdout.write('\n')
-        sys.stdout.flush()
+        sys.stderr.write('\n')
+        sys.stderr.flush()
 
         # Check that all files we were looking for was in the archive
         for k in manifest['modified']:
@@ -1813,9 +1813,9 @@ try:
                         processed += 1
                         if not verbose and total_files > 0:
                             pct = 100 * processed // total_files
-                            sys.stdout.write(
+                            sys.stderr.write(
                                 '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
-                            sys.stdout.flush()
+                            sys.stderr.flush()
                         item = tar.next()
                         continue
                     if conflict_mode == 'replace' and os.path.exists(target_path):
@@ -1836,12 +1836,12 @@ try:
                     processed += 1
                     if not verbose and total_files > 0:
                         pct = 100 * processed // total_files
-                        sys.stdout.write(
+                        sys.stderr.write(
                             '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
-                        sys.stdout.flush()
+                        sys.stderr.flush()
                     item = tar.next()
-            sys.stdout.write('\n')
-            sys.stdout.flush()
+            sys.stderr.write('\n')
+            sys.stderr.flush()
         except Exception:
             restore_failed_single = True
             raise
@@ -1852,8 +1852,8 @@ try:
                 moved_info_single, restore_outcome_single, failed=restore_failed_single,
                 skip_reasons=skip_reasons_single, invocation=' '.join(sys.argv))
     if not verbose and total_files > 0:
-        sys.stdout.write('\n')
-        sys.stdout.flush()
+        sys.stderr.write('\n')
+        sys.stderr.flush()
     logging.info("Backup has been restored")
 finally:
     if single_backup_cleanup_work and os.path.isdir(single_backup_cleanup_work):
