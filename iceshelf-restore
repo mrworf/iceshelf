@@ -248,11 +248,28 @@ def validate_file(filepath, gpg=None):
     return True
 
 
+def _gpg_failure_reason(stderr_text):
+    """Derive a short user-facing reason from GPG stderr (or return None for generic)."""
+    if not stderr_text:
+        return None
+    low = stderr_text.lower()
+    if 'untrusted key' in low or 'using untrusted key' in low:
+        return 'signature key not in keyring or not trusted (use --key-file or import the key)'
+    if 'no public key' in low or 'no_pubkey' in low:
+        return 'signing key not in keyring (use --key-file with the backup\'s public key)'
+    if 'badsig' in low or 'bad signature' in low:
+        return 'signature verification failed'
+    if 'decryption failed' in low or 'no secret key' in low:
+        return 'decryption failed (wrong passphrase or key not in keyring)'
+    return None
+
+
 def strip_file(filename, gpg=None, output_path=None, work_dir=None):
     """Strip signatures and decrypt files as needed.
     If output_path is given, the final stripped/decrypted file is written there.
     If work_dir is given, all intermediates and final output go under work_dir (read from source
     directly on first step to save space; never write or delete in the source directory).
+    Returns (path, None) on success, (None, error_reason) on failure.
     """
     if gpg is None:
         gpg = gnupg.GPG()
@@ -285,19 +302,23 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None):
                     passphrase=config.get('encrypt-pw'),
                     output=next_path)
         except BrokenPipeError:
-            logging.error(
-                'Unable to decrypt "%s": broken pipe (gpg exited early). '
-                'Check passphrase and that the file is encrypted for a key in your keyring.',
-                current)
-            return None
+            reason = (
+                'Broken pipe (gpg exited early). '
+                'Check passphrase and that the file is encrypted for a key in your keyring.')
+            logging.error('Unable to decrypt "%s": %s', current, reason)
+            return (None, reason)
         except OSError as exc:
             logging.error('Unable to decrypt "%s": %s', current, exc)
-            return None
+            return (None, str(exc))
         if result is None:
             logging.error('Unable to decrypt (unknown reason): %s', current)
-            return None
+            return (None, 'unknown reason')
         if not getattr(result, 'ok', True):
-            msg = getattr(result, 'status', '') or getattr(result, 'stderr', '') or 'gpg failed'
+            # Prefer stderr (full GPG output); status is a brief summary and can be misleading
+            stderr = (getattr(result, 'stderr', '') or '').strip()
+            status = (getattr(result, 'status', '') or '').strip()
+            msg = stderr or status or 'gpg failed'
+            summary = _gpg_failure_reason(msg) or 'GPG verification or decryption failed'
             signature_related = 'signature' in msg.lower()
             skip_ok = (
                 signature_related
@@ -313,20 +334,20 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None):
                     logging.error(
                         'Rerun with --skip-signature for backups without a signature.')
                 logging.error(
-                    'GPG decryption failed for "%s": %s (e.g. out of space?)',
-                    current, msg)
+                    'GPG decryption failed for "%s": %s\n\n%s',
+                    current, summary, msg)
                 if os.path.exists(next_path) and (work_dir is None or _path_inside(work_dir, next_path)):
                     try:
                         os.unlink(next_path)
                     except OSError:
                         pass
-                return None
+                return (None, summary)
         if not os.path.exists(next_path):
+            status = getattr(result, 'status', 'unknown')
             logging.error(
                 'Unable to decrypt (%s): %s',
-                getattr(result, 'status', 'unknown'),
-                current)
-            return None
+                status, current)
+            return (None, status)
 
         # Remove previous stage only if it was in work_dir (never touch source)
         if work_dir is not None and _path_inside(work_dir, current):
@@ -343,14 +364,14 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None):
                 shutil.copy2(current, output_path)
             except OSError as exc:
                 logging.error('Failed to write decrypted archive to %s: %s', output_path, exc)
-                return None
+                return (None, str(exc))
         if work_dir is not None and _path_inside(work_dir, current):
             try:
                 os.unlink(current)
             except OSError as exc:
                 logging.warning('Could not remove temp file %s: %s', current, exc)
-        return output_path
-    return current
+        return (output_path, None)
+    return (current, None)
 
 
 def get_all_backup_basenames(base_dir):
@@ -574,7 +595,7 @@ def get_chain_gaps(basepath, all_basenames, restore_gpg, config):
                 continue
             if not validate_file(manifest_path, restore_gpg):
                 continue
-            stripped = strip_file(manifest_path, restore_gpg, work_dir=work_dir)
+            stripped, _ = strip_file(manifest_path, restore_gpg, work_dir=work_dir)
             if stripped is None:
                 continue
             try:
@@ -733,14 +754,12 @@ def _restore_temp_dir(restore_base, cmdline):
 
 def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg, config, cmdline, keyring_dir=None):
     """Restore all backups in order to restore_base, merging state and applying conflict policy."""
-    # 1) Load manifests: for each backup validate+strip manifest (and archive), load manifest
+    # 1) Load manifests: for each backup validate+strip manifest, load manifest (no archive decryption yet)
     # Use a fresh GPG instance per backup to avoid pipe/state reuse bugs (e.g. BrokenPipeError
     # when the same instance is used for multiple verify_file/decrypt_file calls).
     n_backups = len(all_basenames)
     logging.info('Multi-archive restore: processing %d backup(s)', n_backups)
     manifests_by_basename = {}
-    stripped_archives = {}  # basename -> path to stripped tar
-    temp_archive_paths = []  # decrypted temp files to remove after extract
     stripped_manifest_paths = []  # decrypted manifest .json files to remove so .restore can be deleted
     restore_temp_dir = None  # set when we need to decrypt manifest or archive
     for idx, basename in enumerate(all_basenames, 1):
@@ -768,31 +787,16 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                 logging.error('Cannot create restore temp dir "%s": %s', restore_temp_dir, exc)
                 sys.exit(1)
         logging.info('  Decrypting manifest for %s...', basename)
-        stripped_manifest = strip_file(manifest_path, backup_gpg, work_dir=restore_temp_dir)
+        stripped_manifest, strip_err = strip_file(manifest_path, backup_gpg, work_dir=restore_temp_dir)
         if stripped_manifest is None:
-            logging.error('Unable to process manifest for "%s"', basename)
+            logging.error(
+                'Unable to process manifest for "%s": %s',
+                basename, strip_err or 'decryption or signature verification failed')
             sys.exit(1)
         with open(stripped_manifest, encoding='utf-8') as fp:
             manifest = json.load(fp)
         manifests_by_basename[basename] = manifest
         stripped_manifest_paths.append(stripped_manifest)
-        if cmdline.restore:
-            if not validate_file(archive_path, backup_gpg):
-                logging.error('Archive validation failed for "%s"', basename)
-                sys.exit(1)
-            logging.info(
-                '  Decrypting archive for %s (may take several minutes for large files)...',
-                basename)
-            fd, temp_path = tempfile.mkstemp(
-                suffix='.tar.bz2', prefix='iceshelf-restore.%s.' % basename, dir=restore_temp_dir)
-            os.close(fd)
-            temp_archive_paths.append(temp_path)
-            stripped = strip_file(archive_path, backup_gpg, output_path=temp_path, work_dir=restore_temp_dir)
-            if stripped is None:
-                logging.error('Unable to process archive for "%s"', basename)
-                sys.exit(1)
-            stripped_archives[basename] = stripped
-            logging.info('  Decrypted archive for %s', basename)
 
     # 2) Chain-gap warning
     missing = set()
@@ -847,62 +851,72 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                 logging.info(
                     'Extracting from backup %d/%d: %s (%d file(s))',
                     ext_idx, n_backups, backup_id, n_files)
-                archive_path = stripped_archives[backup_id]
-                with tarfile.open(archive_path, "r:*") as tar:
-                    for restore_path, path_in_archive, checksum in by_backup[backup_id]:
-                        dest_full = os.path.normpath(restore_base + restore_path)
-                        decision = check_conflict(dest_full, checksum, conflict_mode)
-                        if decision == 'abort':
-                            restore_failed = True
-                            logging.error(
-                                'Conflict at "%s" (file exists). Use --conflict replace to overwrite or '
-                                '--conflict skipsame to skip only when content matches.',
-                                dest_full)
-                            sys.exit(1)
-                        if decision == 'skip':
-                            restore_outcome[restore_path] = 'skipped'
-                            if verbose:
-                                logging.info('Skipping existing "%s"', dest_full)
-                            processed += 1
-                            if not verbose and total_files > 0:
-                                pct = 100 * processed // total_files
-                                sys.stdout.write(
-                                    '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
-                                sys.stdout.flush()
-                            continue
-                        dirname = os.path.dirname(dest_full)
-                        if dirname:
-                            try:
-                                os.makedirs(dirname, exist_ok=True)
-                            except OSError as exc:
+                archive_path = get_archive_file(basepath, backup_id)
+                if not archive_path:
+                    logging.error('Archive not found for "%s"', backup_id)
+                    sys.exit(1)
+                backup_gpg = gnupg.GPG(gnupghome=keyring_dir) if keyring_dir else gnupg.GPG()
+                if not validate_file(archive_path, backup_gpg):
+                    restore_failed = True
+                    logging.error(
+                        'Archive validation failed for "%s". '
+                        'Ensure all backups are signed with a key in your keyring (e.g. from --key-file).',
+                        backup_id)
+                    sys.exit(1)
+                logging.info(
+                    '  Decrypting archive for %s (may take several minutes for large files)...',
+                    backup_id)
+                fd, temp_path = tempfile.mkstemp(
+                    suffix='.tar.bz2', prefix='iceshelf-restore.%s.' % backup_id, dir=restore_temp_dir)
+                os.close(fd)
+                try:
+                    stripped, strip_err = strip_file(archive_path, backup_gpg, output_path=temp_path, work_dir=restore_temp_dir)
+                    if stripped is None:
+                        logging.error(
+                            'Unable to process archive for "%s": %s',
+                            backup_id, strip_err or 'decryption or signature verification failed')
+                        sys.exit(1)
+                    with tarfile.open(stripped, "r:*") as tar:
+                        for restore_path, path_in_archive, checksum in by_backup[backup_id]:
+                            dest_full = os.path.normpath(restore_base + restore_path)
+                            decision = check_conflict(dest_full, checksum, conflict_mode)
+                            if decision == 'abort':
                                 restore_failed = True
-                                logging.error('Cannot create directory "%s": %s', dirname, exc)
+                                logging.error(
+                                    'Conflict at "%s" (file exists). Use --conflict replace to overwrite or '
+                                    '--conflict skipsame to skip only when content matches.',
+                                    dest_full)
                                 sys.exit(1)
-                        if conflict_mode == 'replace' and os.path.exists(dest_full):
+                            if decision == 'skip':
+                                restore_outcome[restore_path] = 'skipped'
+                                if verbose:
+                                    logging.info('Skipping existing "%s"', dest_full)
+                                processed += 1
+                                if not verbose and total_files > 0:
+                                    pct = 100 * processed // total_files
+                                    sys.stdout.write(
+                                        '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
+                                    sys.stdout.flush()
+                                continue
+                            dirname = os.path.dirname(dest_full)
+                            if dirname:
+                                try:
+                                    os.makedirs(dirname, exist_ok=True)
+                                except OSError as exc:
+                                    restore_failed = True
+                                    logging.error('Cannot create directory "%s": %s', dirname, exc)
+                                    sys.exit(1)
+                            if conflict_mode == 'replace' and os.path.exists(dest_full):
+                                try:
+                                    if os.path.isdir(dest_full) and not os.path.islink(dest_full):
+                                        shutil.rmtree(dest_full)
+                                    else:
+                                        os.unlink(dest_full)
+                                except OSError as exc:
+                                    logging.warning('Unable to remove existing "%s": %s', dest_full, exc)
+                            member_name = path_in_archive.lstrip('/')
                             try:
-                                if os.path.isdir(dest_full) and not os.path.islink(dest_full):
-                                    shutil.rmtree(dest_full)
-                                else:
-                                    os.unlink(dest_full)
-                            except OSError as exc:
-                                logging.warning('Unable to remove existing "%s": %s', dest_full, exc)
-                        member_name = path_in_archive.lstrip('/')
-                        try:
-                            member = tar.getmember(member_name)
-                        except tarfile.ReadError as e:
-                            restore_failed = True
-                            logging.error(
-                                'Archive "%s" appears truncated or corrupt (tar read error: %s). '
-                                'If using multi-archive restore, try restoring one backup at a time.',
-                                backup_id, e)
-                            sys.exit(1)
-                        except KeyError:
-                            member = None
-                            try:
-                                for m in tar.getmembers():
-                                    if m.name == member_name or '/' + m.name == path_in_archive:
-                                        member = m
-                                        break
+                                member = tar.getmember(member_name)
                             except tarfile.ReadError as e:
                                 restore_failed = True
                                 logging.error(
@@ -910,30 +924,44 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                                     'If using multi-archive restore, try restoring one backup at a time.',
                                     backup_id, e)
                                 sys.exit(1)
-                        if member is None:
-                            restore_failed = True
-                            logging.error('Archive "%s" does not contain "%s"', backup_id, path_in_archive)
-                            sys.exit(1)
-                        tar.extract(member, restore_base)
-                        restore_outcome[restore_path] = 'restored'
-                        if verbose:
-                            logging.info('Extracted "%s" to "%s"', path_in_archive, dest_full)
-                        processed += 1
-                        if not verbose and total_files > 0:
-                            pct = 100 * processed // total_files
-                            sys.stdout.write(
-                                '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
-                            sys.stdout.flush()
+                            except KeyError:
+                                member = None
+                                try:
+                                    for m in tar.getmembers():
+                                        if m.name == member_name or '/' + m.name == path_in_archive:
+                                            member = m
+                                            break
+                                except tarfile.ReadError as e:
+                                    restore_failed = True
+                                    logging.error(
+                                        'Archive "%s" appears truncated or corrupt (tar read error: %s). '
+                                        'If using multi-archive restore, try restoring one backup at a time.',
+                                        backup_id, e)
+                                    sys.exit(1)
+                            if member is None:
+                                restore_failed = True
+                                logging.error('Archive "%s" does not contain "%s"', backup_id, path_in_archive)
+                                sys.exit(1)
+                            tar.extract(member, restore_base)
+                            restore_outcome[restore_path] = 'restored'
+                            if verbose:
+                                logging.info('Extracted "%s" to "%s"', path_in_archive, dest_full)
+                            processed += 1
+                            if not verbose and total_files > 0:
+                                pct = 100 * processed // total_files
+                                sys.stdout.write(
+                                    '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
+                                sys.stdout.flush()
+                finally:
+                    try:
+                        if os.path.isfile(temp_path):
+                            os.unlink(temp_path)
+                    except OSError as exc:
+                        logging.warning('Could not remove temp decrypted archive %s: %s', temp_path, exc)
         except Exception:
             restore_failed = True
             raise
     finally:
-        for path in temp_archive_paths:
-            try:
-                if os.path.isfile(path):
-                    os.unlink(path)
-            except OSError as exc:
-                logging.warning('Could not remove temp decrypted archive %s: %s', path, exc)
         for path in stripped_manifest_paths:
             try:
                 if os.path.isfile(path):
@@ -1320,9 +1348,11 @@ try:
             logging.warning('Skipping filelist "%s" due to failed validation', list_basename)
             filelist_path = None
         elif cmdline.list or cmdline.restore or cmdline.validate:
-            stripped_list = strip_file(filelist_path, restore_gpg, work_dir=work_dir)
+            stripped_list, strip_err = strip_file(filelist_path, restore_gpg, work_dir=work_dir)
             if stripped_list is None:
-                logging.warning('Unable to process filelist "%s"', list_basename)
+                logging.warning(
+                    'Unable to process filelist "%s": %s',
+                    list_basename, strip_err or 'decryption or signature verification failed')
                 filelist_path = None
             else:
                 if not valid_archive(basepath, stripped_list, corrupt_files, found_files):
@@ -1343,9 +1373,14 @@ try:
         logging.error('Manifest validation failed. Ensure it is signed with a key in your keyring.')
         if not cmdline.force:
             sys.exit(1)
-    stripped_manifest = strip_file(file_manifest_path, restore_gpg, work_dir=work_dir) if do_manifest else None
+    if do_manifest:
+        stripped_manifest, strip_err = strip_file(file_manifest_path, restore_gpg, work_dir=work_dir)
+    else:
+        stripped_manifest, strip_err = None, None
     if do_manifest and stripped_manifest is None:
-        logging.error('Unable to process manifest')
+        logging.error(
+            'Unable to process manifest: %s',
+            strip_err or 'decryption or signature verification failed')
         sys.exit(1)
     file_manifest = stripped_manifest if stripped_manifest else file_manifest_path
     if do_manifest and not os.path.exists(file_manifest):
@@ -1373,9 +1408,11 @@ try:
             logging.error('File "%s" signature does not match', file_archive)
             if not cmdline.force:
                 sys.exit(1)
-        archive = strip_file(os.path.join(basepath, file_archive), restore_gpg, work_dir=work_dir)
+        archive, strip_err = strip_file(os.path.join(basepath, file_archive), restore_gpg, work_dir=work_dir)
         if archive is None:
-            logging.error('Unable to process "%s"', file_archive)
+            logging.error(
+                'Unable to process "%s": %s',
+                file_archive, strip_err or 'decryption or signature verification failed')
             sys.exit(1)
 
     if file_manifest is None:
