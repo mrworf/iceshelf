@@ -658,6 +658,7 @@ def merge_manifests(manifests_by_basename):
             path = path if path.startswith('/') else '/' + path
             merged.pop(path, None)
         for newpath, info in manifest.get('moved', {}).items():
+            info = _normalize_moved_entry(info, backup_id)
             newpath = newpath if newpath.startswith('/') else '/' + newpath
             oldpath = info.get('original', '')
             oldpath = oldpath if oldpath.startswith('/') else '/' + oldpath
@@ -682,6 +683,16 @@ def _norm_path(path):
     return path.rstrip('/') or '/'
 
 
+def _normalize_moved_entry(info, backup_id):
+    """Normalize a 'moved' entry value. Old format: string (original path). New format: dict with 'original' and 'reference'."""
+    if isinstance(info, dict):
+        return {
+            'original': info.get('original', ''),
+            'reference': info.get('reference', backup_id),
+        }
+    return {'original': info if isinstance(info, str) else '', 'reference': backup_id}
+
+
 def build_deleted_list_multi(manifests_by_basename, all_basenames):
     """
     Walk manifests in chronological order; return list of (path, introduced_in, deleted_in)
@@ -697,6 +708,7 @@ def build_deleted_list_multi(manifests_by_basename, all_basenames):
                 deleted_entries.append((path, seen[path], backup_id))
             seen.pop(path, None)
         for newpath, info in manifest.get('moved', {}).items():
+            info = _normalize_moved_entry(info, backup_id)
             newpath = _norm_path(newpath)
             oldpath = _norm_path(info.get('original', ''))
             seen.pop(oldpath, None)
@@ -718,7 +730,7 @@ def build_moved_info_multi(manifests_by_basename, merged):
         manifest = manifests_by_basename.get(backup_id, {})
         moved_entries = manifest.get('moved', {})
         if restore_path in moved_entries:
-            info = moved_entries[restore_path]
+            info = _normalize_moved_entry(moved_entries[restore_path], backup_id)
             original = _norm_path(info.get('original', ''))
             reference = info.get('reference', backup_id)
             moved_info[restore_path] = (original, reference)
@@ -1558,6 +1570,7 @@ try:
             path = _norm_path(path)
             merged_single[path] = (basename, path, meta.get('checksum', ''))
         for newpath, info in manifest.get('moved', {}).items():
+            info = _normalize_moved_entry(info, basename)
             newpath = _norm_path(newpath)
             checksum = ''
             if newpath in manifest.get('modified', {}):
@@ -1569,6 +1582,7 @@ try:
             for p in manifest.get('deleted', [])]
         moved_info_single = {}
         for newpath, info in manifest.get('moved', {}).items():
+            info = _normalize_moved_entry(info, basename)
             newpath = _norm_path(newpath)
             moved_info_single[newpath] = (
                 _norm_path(info.get('original', '')),
@@ -1633,8 +1647,8 @@ try:
                 logging.warning('Unable to remove "%s": %s', src, e)
 
     for k in manifest['moved']:
-        v = manifest['moved'][k]
-        src = os.path.normpath(restore_base + v['original'])
+        v = _normalize_moved_entry(manifest['moved'][k], basename)
+        src = os.path.normpath(restore_base + v.get('original', ''))
         dst = os.path.normpath(restore_base + k)
         if cmdline.list:
             logging.info('Manifest: Moving "%s" to "%s"', src, dst)
