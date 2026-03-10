@@ -54,11 +54,19 @@ def repairParity(filename):
       os.unlink(filename + '.1')
   return p.returncode == 0
 
-def hashFile(file, shatype, includeType=False):
+def hashFile(file, shatype, includeType=False, progress_callback=None):
+  """Hash file with optional progress_callback(bytes_done_this_file, total_this_file)."""
   sha = hashlib.new(shatype)
+  total = os.path.getsize(file) if progress_callback is not None else None
+  if progress_callback is not None and total is not None:
+    progress_callback(0, total)
+  bytes_read = 0
   with open(file, 'rb') as fp:
     for chunk in iter(lambda: fp.read(32768), b''):
       sha.update(chunk)
+      bytes_read += len(chunk)
+      if progress_callback is not None and total is not None:
+        progress_callback(bytes_read, total)
   if includeType:
     return sha.hexdigest() + ":" + shatype
   return sha.hexdigest()

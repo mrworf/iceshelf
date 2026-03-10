@@ -16,52 +16,140 @@ import json
 import logging
 import os.path
 import re
+import shutil
+import time
+import signal
+import subprocess
 import sys
 import tarfile
+import tempfile
 import gnupg
 from modules import configuration
 from modules import fileutils
 
+# Established patterns from iceshelf backup output (exact filenames only).
+MANIFEST_SUFFIXES = ('.json.gpg.asc', '.json.asc', '.json.gpg', '.json')
+# Prefer most-wrapped first so we never use left-over decrypted intermediates
+ARCHIVE_SUFFIXES = ('.tar.bz2.gpg.sig', '.tar.bz2.gpg', '.tar.bz2', '.tar.gpg.sig', '.tar.gpg', '.tar')
+FILELIST_SUFFIXES = ('.lst.asc', '.lst')
+# PAR2: archive_filename.par2, archive_filename.volN+MM.par2, optional .sig
+PAR2_VOL_PATTERN = re.compile(r'^\.vol\d+\+\d+\.par2(\.sig)?$')
 
-def valid_archive(base_dir, list_filename, corrupt_list, found_files):
+
+def get_manifest_file(basepath, basename):
+    """Return path to manifest file if it exists; check only iceshelf manifest names in order."""
+    for suffix in MANIFEST_SUFFIXES:
+        path = os.path.join(basepath, basename + suffix)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def get_archive_file(basepath, basename):
+    """Return path to main archive file if it exists; check only iceshelf archive names in order."""
+    for suffix in ARCHIVE_SUFFIXES:
+        path = os.path.join(basepath, basename + suffix)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def get_filelist_file(basepath, basename):
+    """Return path to filelist file if it exists; check only iceshelf filelist names in order."""
+    for suffix in FILELIST_SUFFIXES:
+        path = os.path.join(basepath, basename + suffix)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def get_parity_files(basepath, archive_filename):
+    """Return list of paths that are PAR2 files for this archive (exact iceshelf PAR2 naming)."""
+    results = []
+    base_par2 = os.path.join(basepath, archive_filename + '.par2')
+    base_par2_sig = base_par2 + '.sig'
+    if os.path.isfile(base_par2):
+        results.append(base_par2)
+    if os.path.isfile(base_par2_sig):
+        results.append(base_par2_sig)
+    try:
+        for entry in os.listdir(basepath):
+            if not entry.startswith(archive_filename + '.vol'):
+                continue
+            rest = entry[len(archive_filename):]
+            if PAR2_VOL_PATTERN.match(rest):
+                results.append(os.path.join(basepath, entry))
+    except OSError:
+        pass
+    return results
+
+
+def valid_archive(base_dir, list_file_path, corrupt_list, found_files):
     """
-    Start with validating all files and confirm existance of files, using the filelist.txt
+    Validate files listed in the filelist. list_file_path is the full path to the list file
+    (may be in a temp dir); base_dir is the backup directory for resolving relative paths in the list.
     """
     p = re.compile('([a-f0-9]+)\\s+([^\\s]+)')
     criticalerror = False
     archivecorrupt = False
     paritycount = 0
     del found_files[:]
-    with open(os.path.join(base_dir, list_filename), "r", encoding='utf-8') as list_fp:
-        for line in list_fp:
-            res = p.match(line)
-            if res:
-                if os.path.exists(os.path.join(base_dir, res.group(2))):
-                    found_files.append(res.group(2))
-                    sha = fileutils.hashFile(
-                        os.path.join(base_dir, res.group(2)), 'sha1')
-                    if sha != res.group(1):
-                        corrupt_list.append(res.group(2))
-                        if ".json" in line:
-                            logging.error(
-                                'Manifest is corrupt, please restore manually')
-                            criticalerror = True
-                        elif ".tar" in line:
-                            archivecorrupt = True
-                        elif ".par2" in line:
-                            logging.warning(
-                                'Parity file "%s" is corrupt and will not be used',
-                                res.group(2))
-                    elif ".par2" in line:
-                        paritycount += 1
-                else:
+    with open(list_file_path, "r", encoding='utf-8') as list_fp:
+        all_lines = list_fp.readlines()
+
+    # First pass: check filelist format, all files exist, and compute total bytes to validate
+    to_validate = []  # list of (checksum, full_path, line)
+    total_bytes = 0
+    for line in all_lines:
+        res = p.match(line)
+        if not res:
+            logging.error("filelist.txt is corrupt")
+            return False
+        full_path = os.path.join(base_dir, res.group(2))
+        if not os.path.exists(full_path):
+            logging.error(
+                'File "%s" is missing from backup',
+                res.group(2))
+            return False
+        total_bytes += os.path.getsize(full_path)
+        to_validate.append((res.group(1), full_path, line))
+
+    bytes_done = 0
+    last_pct = -1
+
+    def progress_callback(file_done, _file_total):
+        nonlocal bytes_done, last_pct
+        pct = (100 * (bytes_done + file_done) // total_bytes) if total_bytes else 100
+        if pct != last_pct:
+            sys.stdout.write('\rValidating archive, %d%% done    ' % pct)
+            sys.stdout.flush()
+            last_pct = pct
+
+    try:
+        for checksum, full_path, line in to_validate:
+            found_files.append(os.path.relpath(full_path, base_dir))
+            sha = fileutils.hashFile(
+                full_path, 'sha1', progress_callback=progress_callback)
+            file_size = os.path.getsize(full_path)
+            bytes_done += file_size
+            if sha != checksum:
+                corrupt_list.append(os.path.relpath(full_path, base_dir))
+                if ".json" in line:
                     logging.error(
-                        'File "%s" is missing from backup',
-                        res.group(2))
-                    return False
-            else:
-                logging.error("filelist.txt is corrupt")
-                return False
+                        'Manifest is corrupt, please restore manually')
+                    criticalerror = True
+                elif ".tar" in line:
+                    archivecorrupt = True
+                elif ".par2" in line:
+                    logging.warning(
+                        'Parity file "%s" is corrupt and will not be used',
+                        os.path.relpath(full_path, base_dir))
+            elif ".par2" in line:
+                paritycount += 1
+    finally:
+        sys.stdout.write('\n')
+        sys.stdout.flush()
+
     if archivecorrupt and paritycount == 0:
         logging.error('Archive is corrupt and no available parity files')
         criticalerror = True
@@ -71,17 +159,84 @@ def valid_archive(base_dir, list_filename, corrupt_list, found_files):
     return not criticalerror
 
 
-def validate_file(filepath):
-    """Verify GPG signatures when present."""
-    gpg = gnupg.GPG()
+def _is_gpg_encrypted(filepath, gpg=None):
+    """Return True if the file is OpenPGP-encrypted (not just signed). Uses gpg --list-packets."""
+    env = os.environ.copy()
+    if gpg is not None and getattr(gpg, 'gnupghome', None):
+        env['GNUPGHOME'] = gpg.gnupghome
+    try:
+        result = subprocess.run(
+            ['gpg', '--list-packets', filepath],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+        out = (result.stdout or '') + (result.stderr or '')
+        return 'pubkey enc packet' in out or 'encrypted data packet' in out
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _path_inside(parent_dir, path):
+    """Return True if path is under parent_dir (or equal). Used to avoid deleting source files."""
+    try:
+        return os.path.commonpath([os.path.abspath(parent_dir), os.path.abspath(path)]) == os.path.abspath(parent_dir)
+    except ValueError:
+        return False
+
+
+def _strip_one_suffix(basename):
+    """Return basename with one layer of .sig/.asc/.gpg stripped. Caller checks it ends with one of these."""
+    ext = basename[-4:]
+    base = basename[:-4]
+    if base[-4:] == '.gpg' and ext == '.asc':
+        base = base[:-4] + ext
+    return base
+
+
+def _should_verify_signature(filepath, gpg=None):
+    """Return False if we should skip verification (file is encrypted); True to run verify."""
+    if '.gpg.asc' in filepath or '.gpg.sig' in filepath or filepath.endswith('.gpg'):
+        return False
+    if filepath.endswith('.asc') or filepath.endswith('.sig'):
+        if _is_gpg_encrypted(filepath, gpg):
+            return False
+    return True
+
+
+def validate_file(filepath, gpg=None):
+    """Verify GPG signatures when present. Skip verify for encrypted files (decrypt only)."""
+    if gpg is None:
+        gpg = gnupg.GPG()
 
     logging.debug('Validating "%s"', filepath)
 
     if filepath.endswith('.sig') or filepath.endswith('.asc'):
+        if not _should_verify_signature(filepath, gpg):
+            return True
+        if config.get('skip_signature'):
+            return True
+        if config.get('cannot_validate_signatures'):
+            logging.error(
+                'Signature present but cannot validate (no public key in key file). '
+                'Rerun with --skip-signature to skip signature verification.')
+            return False
         try:
             with open(filepath, 'rb') as sig_file:
                 verification = gpg.verify_file(sig_file)
+        except BrokenPipeError:
+            logging.error(
+                'gpg verification failed: broken pipe (gpg exited early). '
+                'Ensure the file is signed with a key in your keyring (e.g. from --key-file).')
+            logging.info(
+                'Run "gpg --verify %s" to see GPG\'s error; with --key-file the signer\'s key must be in that file.',
+                filepath)
+            return False
         except OSError as exc:
+            logging.error('gpg verification failed: %s', exc)
+            return False
+        except Exception as exc:
             logging.error('gpg verification failed: %s', exc)
             return False
         if not verification or not verification.valid:
@@ -93,82 +248,756 @@ def validate_file(filepath):
     return True
 
 
-def strip_file(filename):
-    """Strip signatures and decrypt files as needed."""
-    gpg = gnupg.GPG()
-    destfile = filename
+def strip_file(filename, gpg=None, output_path=None, work_dir=None):
+    """Strip signatures and decrypt files as needed.
+    If output_path is given, the final stripped/decrypted file is written there.
+    If work_dir is given, all intermediates and final output go under work_dir (read from source
+    directly on first step to save space; never write or delete in the source directory).
+    """
+    if gpg is None:
+        gpg = gnupg.GPG()
 
     logging.debug('Processing "%s"', filename)
 
-    while destfile.endswith('.sig') or destfile.endswith(
-            '.asc') or destfile.endswith('.gpg'):
-        ext = destfile[-4:]
-        destfile = destfile[0:-4]
-        if destfile[-4:] == '.gpg' and ext == '.asc':
-            destfile = destfile[0:-4] + ext
-        result = None
-        if os.path.exists(destfile):
-            os.remove(destfile)
-        with open(filename, 'rb') as src_fh:
-            result = gpg.decrypt_file(
-                src_fh,
-                always_trust=True,
-                passphrase=config.get('encrypt-pw'),
-                output=destfile)
-        if result is None:
-            logging.error('Unable to decrypt (unknown reason): %s', filename)
+    current = filename
+    source_dir = os.path.dirname(os.path.abspath(filename))
+
+    while current.endswith('.sig') or current.endswith('.asc') or current.endswith('.gpg'):
+        base = os.path.basename(current)
+        next_basename = _strip_one_suffix(base)
+        if work_dir is not None:
+            next_path = os.path.join(work_dir, next_basename)
+            if os.path.exists(next_path) and _path_inside(work_dir, next_path):
+                try:
+                    os.unlink(next_path)
+                except OSError as exc:
+                    logging.warning('Could not remove temp file %s: %s', next_path, exc)
+        else:
+            next_path = os.path.join(source_dir, next_basename)
+            if os.path.exists(next_path):
+                os.remove(next_path)
+
+        try:
+            with open(current, 'rb') as src_fh:
+                result = gpg.decrypt_file(
+                    src_fh,
+                    always_trust=True,
+                    passphrase=config.get('encrypt-pw'),
+                    output=next_path)
+        except BrokenPipeError:
+            logging.error(
+                'Unable to decrypt "%s": broken pipe (gpg exited early). '
+                'Check passphrase and that the file is encrypted for a key in your keyring.',
+                current)
             return None
-        if result is None or not os.path.exists(destfile):
+        except OSError as exc:
+            logging.error('Unable to decrypt "%s": %s', current, exc)
+            return None
+        if result is None:
+            logging.error('Unable to decrypt (unknown reason): %s', current)
+            return None
+        if not getattr(result, 'ok', True):
+            msg = getattr(result, 'status', '') or getattr(result, 'stderr', '') or 'gpg failed'
+            signature_related = 'signature' in msg.lower()
+            skip_ok = (
+                signature_related
+                and config.get('skip_signature')
+                and getattr(result, 'returncode', None) == 0
+                and os.path.exists(next_path))
+            if skip_ok:
+                logging.warning(
+                    'File "%s" lacked signature; --skip-signature is enabled, continuing.',
+                    current)
+            else:
+                if signature_related and not config.get('skip_signature'):
+                    logging.error(
+                        'Rerun with --skip-signature for backups without a signature.')
+                logging.error(
+                    'GPG decryption failed for "%s": %s (e.g. out of space?)',
+                    current, msg)
+                if os.path.exists(next_path) and (work_dir is None or _path_inside(work_dir, next_path)):
+                    try:
+                        os.unlink(next_path)
+                    except OSError:
+                        pass
+                return None
+        if not os.path.exists(next_path):
             logging.error(
                 'Unable to decrypt (%s): %s',
-                result.status,
-                filename)
+                getattr(result, 'status', 'unknown'),
+                current)
             return None
-        filename = destfile
 
-    if filename != destfile:
-        fileutils.copy(filename, destfile)
+        # Remove previous stage only if it was in work_dir (never touch source)
+        if work_dir is not None and _path_inside(work_dir, current):
+            try:
+                os.unlink(current)
+            except OSError as exc:
+                logging.warning('Could not remove temp file %s: %s', current, exc)
 
-    return destfile
+        current = next_path
+
+    if output_path is not None:
+        if os.path.abspath(current) != os.path.abspath(output_path):
+            try:
+                shutil.copy2(current, output_path)
+            except OSError as exc:
+                logging.error('Failed to write decrypted archive to %s: %s', output_path, exc)
+                return None
+        if work_dir is not None and _path_inside(work_dir, current):
+            try:
+                os.unlink(current)
+            except OSError as exc:
+                logging.warning('Could not remove temp file %s: %s', current, exc)
+        return output_path
+    return current
+
+
+def get_all_backup_basenames(base_dir):
+    """
+    Discover all backup basenames that have both a manifest and an archive.
+    Uses only iceshelf's established filename patterns; derives basenames by
+    stripping known suffixes. Returns sorted list (chronological order).
+    """
+    if base_dir == '':
+        base_dir = './'
+    if not os.path.isdir(base_dir):
+        return []
+    has_manifest = set()
+    has_archive = set()
+    try:
+        entries = os.listdir(base_dir)
+    except OSError:
+        return []
+    for entry in entries:
+        for suffix in MANIFEST_SUFFIXES:
+            if entry.endswith(suffix):
+                base = entry[:-len(suffix)]
+                has_manifest.add(base)
+                break
+        for suffix in ARCHIVE_SUFFIXES:
+            if entry.endswith(suffix):
+                base = entry[:-len(suffix)]
+                has_archive.add(base)
+                break
+    restorable = sorted(has_manifest & has_archive)
+    return restorable
 
 
 def getBackupFiles(itemFromBackup):
-    """Locate all files belonging to a backup based on a path or prefix"""
+    """Locate all files belonging to a backup based on a path or prefix.
+    Returns (backup_dir, matched_files, all_basenames).
+    all_basenames is only set when itemFromBackup is a directory (list of restorable backups).
+    """
     backup_dir = os.path.dirname(itemFromBackup)
     basename = os.path.basename(itemFromBackup)
+    all_basenames = None
 
     if os.path.isdir(itemFromBackup):
         backup_dir = itemFromBackup
         basename = None
+        all_basenames = get_all_backup_basenames(backup_dir)
 
     if backup_dir == '':
         backup_dir = './'
 
-    unfiltered = os.listdir(backup_dir)
-
     if basename and '.' in basename:
-        basename = basename.split('.', 1)[0]
-    elif basename:
-        # guess first file with this prefix
-        for entry in unfiltered:
-            if entry.startswith(basename):
-                basename = entry.split('.', 1)[0]
-                break
-    else:
-        # No basename supplied, pick first suitable file
-        for entry in unfiltered:
-            if '.json' in entry or '.tar' in entry:
-                basename = entry.split('.', 1)[0]
-                break
+        # Resolve base by stripping known iceshelf suffixes
+        for suffix in MANIFEST_SUFFIXES + ARCHIVE_SUFFIXES + FILELIST_SUFFIXES:
+            if basename.endswith(suffix):
+                candidate = basename[:-len(suffix)]
+                if (get_manifest_file(backup_dir, candidate) or
+                        get_archive_file(backup_dir, candidate)):
+                    basename = candidate
+                    break
+        else:
+            basename = basename.split('.', 1)[0]
+    elif not basename:
+        if all_basenames:
+            basename = all_basenames[0]
+        else:
+            try:
+                for entry in os.listdir(backup_dir):
+                    for suffix in MANIFEST_SUFFIXES + ARCHIVE_SUFFIXES:
+                        if entry.endswith(suffix):
+                            candidate = entry[:-len(suffix)]
+                            if (get_manifest_file(backup_dir, candidate) or
+                                    get_archive_file(backup_dir, candidate)):
+                                basename = candidate
+                                break
+                    if basename:
+                        break
+            except OSError:
+                pass
 
-    matched_files = []
-    for entry in unfiltered:
-        if basename is None or os.path.basename(
-                entry).startswith(basename) or entry == "filelist.txt":
-            logging.debug('Found backup file "%s"', entry)
-            matched_files.append(entry)
+    matched_files = get_files_for_basename(backup_dir, basename) if basename else []
+    for entry in matched_files:
+        logging.debug('Found backup file "%s"', entry)
 
-    return (backup_dir, matched_files)
+    return (backup_dir, matched_files, all_basenames)
+
+
+def _dest_has_same_checksum(dest_path, manifest_checksum):
+    """Return True if the file at dest_path has the same checksum as manifest_checksum."""
+    if not manifest_checksum or not os.path.isfile(dest_path):
+        return False
+    if ':' in manifest_checksum:
+        algo = manifest_checksum.split(':', 1)[1]
+        current = fileutils.hashFile(dest_path, algo, True)
+        return current == manifest_checksum
+    # Legacy hex-only checksum: infer algorithm from length and compare
+    length = len(manifest_checksum)
+    algo = None
+    if length == 32:
+        algo = 'md5'
+    elif length == 40:
+        algo = 'sha1'
+    elif length == 64:
+        algo = 'sha256'
+    elif length == 56:
+        algo = 'sha224'
+    elif length == 96:
+        algo = 'sha384'
+    elif length == 128:
+        algo = 'sha512'
+    if algo is None:
+        return False
+    current = fileutils.hashFile(dest_path, algo, False)
+    return current == manifest_checksum
+
+
+def check_conflict(restore_path, manifest_checksum, conflict_mode):
+    """
+    Check if restoring to restore_path would conflict with an existing path.
+    Returns: 'proceed' | 'skip' | 'abort'. On 'abort' the caller should sys.exit(1).
+    """
+    if not os.path.exists(restore_path):
+        return 'proceed'
+    if conflict_mode == 'replace':
+        return 'proceed'
+    if conflict_mode == 'skipall':
+        return 'skip'
+    if conflict_mode == 'abort':
+        return 'abort'
+    if conflict_mode == 'skipsame':
+        if os.path.isfile(restore_path) and _dest_has_same_checksum(restore_path, manifest_checksum):
+            return 'skip'
+        return 'abort'
+    return 'proceed'
+
+
+def get_files_for_basename(basepath, basename):
+    """Return list of file names in basepath that belong to this backup (established patterns only)."""
+    if not os.path.isdir(basepath):
+        return []
+    files = []
+    manifest_path = get_manifest_file(basepath, basename)
+    if manifest_path:
+        files.append(os.path.basename(manifest_path))
+    archive_path = get_archive_file(basepath, basename)
+    if archive_path:
+        files.append(os.path.basename(archive_path))
+        for p in get_parity_files(basepath, os.path.basename(archive_path)):
+            files.append(os.path.basename(p))
+    filelist_path = get_filelist_file(basepath, basename)
+    if filelist_path:
+        files.append(os.path.basename(filelist_path))
+    return files
+
+
+# Orderings: index 0 = least wrapped, higher = more wrapped (used to detect left-overs)
+_MANIFEST_SUFFIXES_ORDER = ('.json', '.json.gpg', '.json.asc', '.json.gpg.asc')
+_ARCHIVE_SUFFIXES_ORDER = ('.tar', '.tar.gpg', '.tar.gpg.sig', '.tar.bz2', '.tar.bz2.gpg', '.tar.bz2.gpg.sig')
+_FILELIST_SUFFIXES_ORDER = ('.lst', '.lst.asc')
+
+
+def detect_leftovers(basepath, basename, manifest_path, archive_path, filelist_path=None):
+    """Find files in basepath that look like less-wrapped versions of the chosen backup files.
+    Log a single warning if any are found (informational: may be from prior runs).
+    """
+    leftovers = []
+    basepath_abs = os.path.abspath(basepath)
+
+    def chosen_suffix(path, order_tuple):
+        if not path or not os.path.isfile(path):
+            return None
+        name = os.path.basename(path)
+        if not name.startswith(basename):
+            return None
+        suffix = name[len(basename):]
+        try:
+            idx = order_tuple.index(suffix)
+            return idx
+        except ValueError:
+            return None
+
+    def collect_less_wrapped(order_tuple, chosen_idx, kind_label):
+        if chosen_idx is None:
+            return
+        for i, suf in enumerate(order_tuple):
+            if i >= chosen_idx:
+                continue
+            path = os.path.join(basepath, basename + suf)
+            if os.path.isfile(path) and os.path.abspath(path).startswith(basepath_abs):
+                leftovers.append(os.path.basename(path))
+
+    m_idx = chosen_suffix(manifest_path, _MANIFEST_SUFFIXES_ORDER)
+    a_idx = chosen_suffix(archive_path, _ARCHIVE_SUFFIXES_ORDER)
+    fl_idx = chosen_suffix(filelist_path, _FILELIST_SUFFIXES_ORDER) if filelist_path else None
+
+    collect_less_wrapped(_MANIFEST_SUFFIXES_ORDER, m_idx, 'manifest')
+    collect_less_wrapped(_ARCHIVE_SUFFIXES_ORDER, a_idx, 'archive')
+    collect_less_wrapped(_FILELIST_SUFFIXES_ORDER, fl_idx, 'filelist')
+
+    if leftovers:
+        logging.warning(
+            'Left-over file(s) from prior runs found in backup folder (ignored, using highest-level version): %s',
+            ', '.join(sorted(leftovers)))
+
+
+def _parent_backup(manifest):
+    """Return parent backup id from manifest (lastbackup or previousbackup)."""
+    return manifest.get('lastbackup') or manifest.get('previousbackup')
+
+
+def get_chain_gaps(basepath, all_basenames, restore_gpg, config):
+    """
+    Load each backup's manifest and return set of parent backup ids that are not in all_basenames.
+    Used when listing multiple backups to warn about missing backups in the chain.
+    """
+    missing = set()
+    work_dir = tempfile.mkdtemp(prefix='iceshelf-restore.')
+    try:
+        for basename in all_basenames:
+            manifest_path = get_manifest_file(basepath, basename)
+            if not manifest_path:
+                continue
+            if not validate_file(manifest_path, restore_gpg):
+                continue
+            stripped = strip_file(manifest_path, restore_gpg, work_dir=work_dir)
+            if stripped is None:
+                continue
+            try:
+                with open(stripped, encoding='utf-8') as fp:
+                    manifest = json.load(fp)
+                parent = _parent_backup(manifest)
+                if parent and parent not in all_basenames:
+                    missing.add(parent)
+            except (OSError, json.JSONDecodeError):
+                continue
+    finally:
+        try:
+            shutil.rmtree(work_dir)
+        except OSError:
+            pass
+    return missing
+
+
+def merge_manifests(manifests_by_basename):
+    """
+    Merge manifests in chronological order (basenames already sorted).
+    Returns dict: restore_path -> (backup_id, path_in_archive, checksum).
+    restore_path and path_in_archive use leading slash (e.g. /path/to/file).
+    """
+    merged = {}
+    for backup_id in manifests_by_basename:
+        manifest = manifests_by_basename[backup_id]
+        for path in manifest.get('deleted', []):
+            path = path if path.startswith('/') else '/' + path
+            merged.pop(path, None)
+        for newpath, info in manifest.get('moved', {}).items():
+            newpath = newpath if newpath.startswith('/') else '/' + newpath
+            oldpath = info.get('original', '')
+            oldpath = oldpath if oldpath.startswith('/') else '/' + oldpath
+            merged.pop(oldpath, None)
+            # Content at newpath is in this backup's modified set
+            checksum = ''
+            if 'modified' in manifest and newpath in manifest['modified']:
+                checksum = manifest['modified'][newpath].get('checksum', '')
+            merged[newpath] = (backup_id, newpath, checksum)
+        for path, meta in manifest.get('modified', {}).items():
+            path = path if path.startswith('/') else '/' + path
+            checksum = meta.get('checksum', '')
+            merged[path] = (backup_id, path, checksum)
+    return merged
+
+
+def _norm_path(path):
+    """Normalize path for report: leading slash, no trailing slash."""
+    if not path:
+        return path
+    path = path if path.startswith('/') else '/' + path
+    return path.rstrip('/') or '/'
+
+
+def build_deleted_list_multi(manifests_by_basename, all_basenames):
+    """
+    Walk manifests in chronological order; return list of (path, introduced_in, deleted_in)
+    for paths that were introduced and later deleted.
+    """
+    seen = {}
+    deleted_entries = []
+    for backup_id in all_basenames:
+        manifest = manifests_by_basename.get(backup_id, {})
+        for path in manifest.get('deleted', []):
+            path = _norm_path(path)
+            if path in seen:
+                deleted_entries.append((path, seen[path], backup_id))
+            seen.pop(path, None)
+        for newpath, info in manifest.get('moved', {}).items():
+            newpath = _norm_path(newpath)
+            oldpath = _norm_path(info.get('original', ''))
+            seen.pop(oldpath, None)
+            seen[newpath] = backup_id
+        for path in manifest.get('modified', {}):
+            path = _norm_path(path)
+            seen[path] = backup_id
+    return deleted_entries
+
+
+def build_moved_info_multi(manifests_by_basename, merged):
+    """
+    For each path in merged that came from a 'moved' entry, return (original_path, reference_backup).
+    reference_backup is from manifest moved entry or the backup that owns the path.
+    """
+    moved_info = {}
+    for restore_path, (backup_id, _path_in_archive, _checksum) in merged.items():
+        restore_path = _norm_path(restore_path)
+        manifest = manifests_by_basename.get(backup_id, {})
+        moved_entries = manifest.get('moved', {})
+        if restore_path in moved_entries:
+            info = moved_entries[restore_path]
+            original = _norm_path(info.get('original', ''))
+            reference = info.get('reference', backup_id)
+            moved_info[restore_path] = (original, reference)
+    return moved_info
+
+
+REPORT_FILENAME = 'iceshelf-restore-report.txt'
+
+
+def write_restore_report(restore_base, archive_names, merged, deleted_list, moved_info,
+                         restore_outcome, failed=False):
+    """
+    Write iceshelf-restore-report.txt in the root of restore_base.
+    merged: dict path -> (backup_id, path_in_archive, checksum) for all paths that were to be restored.
+    deleted_list: list of (path, introduced_in, deleted_in).
+    moved_info: dict path -> (original_path, reference_backup) for paths that were moved.
+    restore_outcome: dict path -> 'restored' | 'skipped' (only 'restored' appear in Restored section).
+    """
+    lines = []
+    lines.append('iceshelf-restore audit report')
+    lines.append('Date: %s' % time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
+    lines.append('Destination: %s' % os.path.normpath(restore_base or '.'))
+    if failed:
+        lines.append('Restore status: failed')
+    lines.append('')
+    lines.append('=== Archives ===')
+    for name in sorted(archive_names):
+        lines.append(name)
+    lines.append('')
+    lines.append('=== Restored ===')
+    for path in sorted(restore_outcome.keys()):
+        if restore_outcome.get(path) != 'restored':
+            continue
+        backup_id = merged[path][0] if path in merged else '?'
+        part = '%s (from %s)' % (path, backup_id)
+        if path in moved_info:
+            orig, ref = moved_info[path]
+            part += '; introduced in %s as %s, moved to %s in %s' % (ref, orig, path, backup_id)
+        lines.append(part)
+    lines.append('')
+    lines.append('=== Not restored (deleted) ===')
+    for path, introduced_in, deleted_in in sorted(deleted_list, key=lambda x: x[0]):
+        lines.append('%s — introduced in %s, deleted in %s' % (path, introduced_in, deleted_in))
+    report_path = os.path.join(restore_base or '.', REPORT_FILENAME)
+    try:
+        with open(report_path, 'w', encoding='utf-8') as fp:
+            fp.write('\n'.join(lines))
+            fp.write('\n')
+    except OSError as exc:
+        logging.warning('Could not write restore report to %s: %s', report_path, exc)
+
+
+def _restore_temp_dir(restore_base, cmdline):
+    """Resolve directory for temporary decrypted archives during multi-archive restore.
+    Default: .restore under restore destination. Override with --restore-temp-dir (absolute or relative).
+    """
+    raw = getattr(cmdline, 'restore_temp_dir', None)
+    if raw is None:
+        return os.path.normpath(os.path.join(restore_base or '.', '.restore'))
+    if os.path.isabs(raw):
+        return os.path.normpath(raw)
+    return os.path.normpath(os.path.join(restore_base or '.', raw))
+
+
+def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg, config, cmdline, keyring_dir=None):
+    """Restore all backups in order to restore_base, merging state and applying conflict policy."""
+    # 1) Load manifests: for each backup validate+strip manifest (and archive), load manifest
+    # Use a fresh GPG instance per backup to avoid pipe/state reuse bugs (e.g. BrokenPipeError
+    # when the same instance is used for multiple verify_file/decrypt_file calls).
+    n_backups = len(all_basenames)
+    logging.info('Multi-archive restore: processing %d backup(s)', n_backups)
+    manifests_by_basename = {}
+    stripped_archives = {}  # basename -> path to stripped tar
+    temp_archive_paths = []  # decrypted temp files to remove after extract
+    stripped_manifest_paths = []  # decrypted manifest .json files to remove so .restore can be deleted
+    restore_temp_dir = None  # set when we need to decrypt manifest or archive
+    for idx, basename in enumerate(all_basenames, 1):
+        logging.info('Loading backup %d/%d: %s', idx, n_backups, basename)
+        backup_gpg = gnupg.GPG(gnupghome=keyring_dir) if keyring_dir else gnupg.GPG()
+        manifest_path = get_manifest_file(basepath, basename)
+        archive_path = get_archive_file(basepath, basename)
+        if not manifest_path or not archive_path:
+            logging.error('Backup "%s" missing manifest or archive', basename)
+            sys.exit(1)
+        file_manifest = os.path.basename(manifest_path)
+        file_archive = os.path.basename(archive_path)
+        detect_leftovers(basepath, basename, manifest_path, archive_path, None)
+        if not validate_file(manifest_path, backup_gpg):
+            logging.error(
+                'Manifest validation failed for "%s". '
+                'Ensure all backups are signed with a key in your keyring (e.g. from --key-file).',
+                basename)
+            sys.exit(1)
+        if restore_temp_dir is None:
+            restore_temp_dir = _restore_temp_dir(restore_base, cmdline)
+            try:
+                os.makedirs(restore_temp_dir, exist_ok=True)
+            except OSError as exc:
+                logging.error('Cannot create restore temp dir "%s": %s', restore_temp_dir, exc)
+                sys.exit(1)
+        logging.info('  Decrypting manifest for %s...', basename)
+        stripped_manifest = strip_file(manifest_path, backup_gpg, work_dir=restore_temp_dir)
+        if stripped_manifest is None:
+            logging.error('Unable to process manifest for "%s"', basename)
+            sys.exit(1)
+        with open(stripped_manifest, encoding='utf-8') as fp:
+            manifest = json.load(fp)
+        manifests_by_basename[basename] = manifest
+        stripped_manifest_paths.append(stripped_manifest)
+        if cmdline.restore:
+            if not validate_file(archive_path, backup_gpg):
+                logging.error('Archive validation failed for "%s"', basename)
+                sys.exit(1)
+            logging.info(
+                '  Decrypting archive for %s (may take several minutes for large files)...',
+                basename)
+            fd, temp_path = tempfile.mkstemp(
+                suffix='.tar.bz2', prefix='iceshelf-restore.%s.' % basename, dir=restore_temp_dir)
+            os.close(fd)
+            temp_archive_paths.append(temp_path)
+            stripped = strip_file(archive_path, backup_gpg, output_path=temp_path, work_dir=restore_temp_dir)
+            if stripped is None:
+                logging.error('Unable to process archive for "%s"', basename)
+                sys.exit(1)
+            stripped_archives[basename] = stripped
+            logging.info('  Decrypted archive for %s', basename)
+
+    # 2) Chain-gap warning
+    missing = set()
+    for backup_id, manifest in manifests_by_basename.items():
+        parent = _parent_backup(manifest)
+        if parent and parent not in all_basenames:
+            missing.add(parent)
+    if missing:
+        logging.warning(
+            'Backup(s) not found in folder: %s. Restored set may be incomplete.',
+            ', '.join(sorted(missing)))
+
+    # 3) Merge to get final path -> (backup_id, path_in_archive, checksum)
+    logging.info('Merging manifests (%d backups) to compute final file set...', len(manifests_by_basename))
+    merged = merge_manifests(manifests_by_basename)
+    logging.info('Will restore %d file(s) to %s', len(merged), restore_base)
+
+    if not cmdline.restore:
+        return
+
+    # Report data: archives (top-level names only), deleted list, moved info, restore outcome
+    archive_names = []
+    for b in all_basenames:
+        ap = get_archive_file(basepath, b)
+        if ap and os.path.isfile(ap):
+            archive_names.append(os.path.basename(ap))
+    deleted_list = build_deleted_list_multi(manifests_by_basename, all_basenames)
+    moved_info = build_moved_info_multi(manifests_by_basename, merged)
+    restore_outcome = {}
+    restore_failed = False
+
+    # 4) Extract: group by backup, then for each path apply conflict check and extract
+    conflict_mode = cmdline.conflict
+    verbose = getattr(cmdline, 'verbose', False)
+    by_backup = {}
+    for restore_path, (backup_id, path_in_archive, checksum) in merged.items():
+        by_backup.setdefault(backup_id, []).append((restore_path, path_in_archive, checksum))
+
+    total_files = sum(len(entries) for entries in by_backup.values())
+    processed = 0
+
+    try:
+        try:
+            for ext_idx, backup_id in enumerate(all_basenames, 1):
+                if backup_id not in by_backup:
+                    continue
+                # After the first archive, progress was updated with \r (no newline); start new line
+                if not verbose and total_files > 0 and ext_idx > 1:
+                    sys.stdout.write('\n')
+                    sys.stdout.flush()
+                n_files = len(by_backup[backup_id])
+                logging.info(
+                    'Extracting from backup %d/%d: %s (%d file(s))',
+                    ext_idx, n_backups, backup_id, n_files)
+                archive_path = stripped_archives[backup_id]
+                with tarfile.open(archive_path, "r:*") as tar:
+                    for restore_path, path_in_archive, checksum in by_backup[backup_id]:
+                        dest_full = os.path.normpath(restore_base + restore_path)
+                        decision = check_conflict(dest_full, checksum, conflict_mode)
+                        if decision == 'abort':
+                            restore_failed = True
+                            logging.error(
+                                'Conflict at "%s" (file exists). Use --conflict replace to overwrite or '
+                                '--conflict skipsame to skip only when content matches.',
+                                dest_full)
+                            sys.exit(1)
+                        if decision == 'skip':
+                            restore_outcome[restore_path] = 'skipped'
+                            if verbose:
+                                logging.info('Skipping existing "%s"', dest_full)
+                            processed += 1
+                            if not verbose and total_files > 0:
+                                pct = 100 * processed // total_files
+                                sys.stdout.write(
+                                    '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
+                                sys.stdout.flush()
+                            continue
+                        dirname = os.path.dirname(dest_full)
+                        if dirname:
+                            try:
+                                os.makedirs(dirname, exist_ok=True)
+                            except OSError as exc:
+                                restore_failed = True
+                                logging.error('Cannot create directory "%s": %s', dirname, exc)
+                                sys.exit(1)
+                        if conflict_mode == 'replace' and os.path.exists(dest_full):
+                            try:
+                                if os.path.isdir(dest_full) and not os.path.islink(dest_full):
+                                    shutil.rmtree(dest_full)
+                                else:
+                                    os.unlink(dest_full)
+                            except OSError as exc:
+                                logging.warning('Unable to remove existing "%s": %s', dest_full, exc)
+                        member_name = path_in_archive.lstrip('/')
+                        try:
+                            member = tar.getmember(member_name)
+                        except tarfile.ReadError as e:
+                            restore_failed = True
+                            logging.error(
+                                'Archive "%s" appears truncated or corrupt (tar read error: %s). '
+                                'If using multi-archive restore, try restoring one backup at a time.',
+                                backup_id, e)
+                            sys.exit(1)
+                        except KeyError:
+                            member = None
+                            try:
+                                for m in tar.getmembers():
+                                    if m.name == member_name or '/' + m.name == path_in_archive:
+                                        member = m
+                                        break
+                            except tarfile.ReadError as e:
+                                restore_failed = True
+                                logging.error(
+                                    'Archive "%s" appears truncated or corrupt (tar read error: %s). '
+                                    'If using multi-archive restore, try restoring one backup at a time.',
+                                    backup_id, e)
+                                sys.exit(1)
+                        if member is None:
+                            restore_failed = True
+                            logging.error('Archive "%s" does not contain "%s"', backup_id, path_in_archive)
+                            sys.exit(1)
+                        tar.extract(member, restore_base)
+                        restore_outcome[restore_path] = 'restored'
+                        if verbose:
+                            logging.info('Extracted "%s" to "%s"', path_in_archive, dest_full)
+                        processed += 1
+                        if not verbose and total_files > 0:
+                            pct = 100 * processed // total_files
+                            sys.stdout.write(
+                                '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
+                            sys.stdout.flush()
+        except Exception:
+            restore_failed = True
+            raise
+    finally:
+        for path in temp_archive_paths:
+            try:
+                if os.path.isfile(path):
+                    os.unlink(path)
+            except OSError as exc:
+                logging.warning('Could not remove temp decrypted archive %s: %s', path, exc)
+        for path in stripped_manifest_paths:
+            try:
+                if os.path.isfile(path):
+                    os.unlink(path)
+            except OSError as exc:
+                logging.warning('Could not remove temp manifest %s: %s', path, exc)
+        if restore_temp_dir and os.path.isdir(restore_temp_dir):
+            try:
+                for entry in os.listdir(restore_temp_dir):
+                    p = os.path.join(restore_temp_dir, entry)
+                    if os.path.isfile(p):
+                        try:
+                            os.unlink(p)
+                        except OSError:
+                            pass
+                os.rmdir(restore_temp_dir)
+            except OSError:
+                pass
+        write_restore_report(
+            restore_base, archive_names, merged, deleted_list, moved_info,
+            restore_outcome, failed=restore_failed)
+
+    if not verbose and total_files > 0:
+        sys.stdout.write('\n')
+        sys.stdout.flush()
+    logging.info('Multi-archive restore complete')
+
+
+def secure_wipe_temp_dir(temp_dir):
+    """
+    Securely wipe a temporary keyring directory: overwrite files with zeros
+    then remove. No key material should remain on disk.
+    """
+    if not temp_dir or not os.path.isdir(temp_dir):
+        return
+    for dirpath, dirnames, filenames in os.walk(temp_dir, topdown=False):
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            try:
+                if os.path.isfile(path) and not os.path.islink(path):
+                    with open(path, 'r+b') as f:
+                        length = f.seek(0, 2)
+                        f.seek(0)
+                        f.write(b'\x00' * length)
+                os.unlink(path)
+            except OSError as exc:
+                logging.warning(
+                    'Secure wipe failed for "%s": %s; removing anyway', path, exc)
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        for name in dirnames:
+            path = os.path.join(dirpath, name)
+            try:
+                os.rmdir(path)
+            except OSError as exc:
+                logging.warning('Failed to remove directory "%s": %s', path, exc)
+    try:
+        os.rmdir(temp_dir)
+    except OSError as exc:
+        logging.warning(
+            'Secure wipe: could not remove temp keyring dir "%s": %s. '
+            'You may want to remove it manually (e.g. shred).', temp_dir, exc)
 
 
 # Parse command line
@@ -185,10 +1014,34 @@ parser.add_argument(
     default=False,
     help='Adds more details to the log output')
 parser.add_argument(
+    '--verbose',
+    action='store_true',
+    default=False,
+    help='In restore mode: log each extracted file. Without this, a single progress line is updated.')
+parser.add_argument(
     '--restore',
     metavar="DEST",
     default=None,
     help='Extracts the backup')
+parser.add_argument(
+    '--restore-temp-dir',
+    metavar="DIR",
+    default=None,
+    help='Directory for temporary decrypted archives during multi-archive restore. '
+    'Default: .restore under the restore destination. '
+    'Can be absolute or relative to the restore destination.')
+parser.add_argument(
+    '--all',
+    action='store_true',
+    default=False,
+    help='With a directory of backups and --restore: restore all backups in order (merged state)')
+parser.add_argument(
+    '--conflict',
+    choices=['replace', 'skipall', 'skipsame', 'abort'],
+    default='skipall',
+    metavar='MODE',
+    help='When destination file exists: replace (overwrite), skipall (skip, default), '
+    'skipsame (skip if same hash, abort if different), abort (abort restore)')
 parser.add_argument(
     '--validate',
     action='store_true',
@@ -229,6 +1082,18 @@ parser.add_argument(
     default=None,
     help='Decrypt using supplied passphrase')
 parser.add_argument(
+    '--key-file',
+    metavar='PATH',
+    default=None,
+    help='Use this key file instead of the default keyring; the key is not '
+    'written to your keyring')
+parser.add_argument(
+    '--skip-signature',
+    action='store_true',
+    default=False,
+    help='Skip signature verification; allow backups whose signatures cannot be '
+    'validated or are missing')
+parser.add_argument(
     'backup',
     metavar="BACKUP",
     help="Path to backup prefix or file")
@@ -247,6 +1112,8 @@ if cmdline.repair:
     mode.append('repair')
 if cmdline.restore:
     mode.append('restore')
+if getattr(cmdline, 'verbose', False):
+    mode.append('verbose')
 
 # Setup logging
 logging.getLogger('').handlers = []
@@ -297,234 +1164,426 @@ if cmdline.passphrase:
     config['encrypt-pw'] = cmdline.passphrase
 if cmdline.user:
     config['encrypt'] = cmdline.user
+if getattr(cmdline, 'skip_signature', False):
+    config['skip_signature'] = True
 
-
-basepath, files = getBackupFiles(cmdline.backup)
-logging.info('Located backup in "%s"', basepath)
-logging.info('Detected backup files: %s', ', '.join(files))
-
-file_manifest = None
-file_archive = None
-
-file_parity = None
-filelist = None
-old_filelist = False
-corrupt_files = []
-processed_files = []
-
-for f in files:
-    if ".json" in f:
-        file_manifest = f
-    elif ".par2" in f:
-        file_parity = f
-    elif ".tar" in f:
-        file_archive = f
-    elif f.endswith(".lst"):
-        filelist = f
-    elif f == "filelist.txt":
-        old_filelist = True
-
-if file_manifest is None:
-    if cmdline.force:
-        logging.error(
-            "No manifest found, unable to restore. Will try to verify and repair if needed")
-    else:
-        logging.error(
-            "No manifest found, unable to restore (use --force to do as much as possible)")
+# Optional ephemeral keyring when using --key-file (no key left on disk)
+# Use GNUPGHOME so the gpg binary uses our temp dir (works with both gnupg and python-gnupg)
+restore_gpg = None
+temp_keyring_dir = None
+old_gnupghome = None
+if cmdline.key_file:
+    key_path = os.path.abspath(cmdline.key_file)
+    if not os.path.isfile(key_path):
+        logging.error('Key file does not exist or is not a file: %s', key_path)
         sys.exit(1)
-if file_archive is None:
-    logging.error("No archive found, unable to continue")
-    sys.exit(1)
+    try:
+        with open(key_path, 'rb') as f:
+            f.read(1)
+    except OSError as exc:
+        logging.error('Cannot read key file "%s": %s', key_path, exc)
+        sys.exit(1)
+    temp_keyring_dir = tempfile.mkdtemp(prefix='iceshelf-restore.')
+    os.chmod(temp_keyring_dir, 0o700)
+    old_gnupghome = os.environ.get('GNUPGHOME')
+    os.environ['GNUPGHOME'] = temp_keyring_dir
+    restore_gpg = gnupg.GPG(gnupghome=temp_keyring_dir)
+    with open(key_path, 'rb') as f:
+        key_data = f.read()
+    import_result = restore_gpg.import_keys(key_data)
+    if not import_result or getattr(import_result, 'count', 0) == 0:
+        logging.error(
+            'No key could be imported from "%s". Check that the file is a valid GPG key.',
+            key_path)
+        secure_wipe_temp_dir(temp_keyring_dir)
+        sys.exit(1)
+    logging.debug('Imported key(s) from %s into ephemeral keyring', key_path)
+    has_public = b'-----BEGIN PGP PUBLIC KEY BLOCK-----' in key_data
+    has_private = (
+        b'-----BEGIN PGP PRIVATE KEY BLOCK-----' in key_data
+        or b'-----BEGIN PGP SECRET KEY BLOCK-----' in key_data)
+    if not has_public:
+        logging.warning(
+            'Cannot validate signatures, no public key provided in %s.', key_path)
+        config['cannot_validate_signatures'] = True
+    if not has_private:
+        logging.warning(
+            'Cannot decrypt encrypted files, no private key provided in %s.', key_path)
 
-if file_manifest is not None:
-    logging.debug('Using manifest "%s"', file_manifest)
-if file_parity is not None:
-    logging.debug("Parity is available")
+    def _sig_wipe_keyring(signum, frame):
+        secure_wipe_temp_dir(temp_keyring_dir)
+        sys.exit(128 + (signum or 0))
 
-# If we have a filelist, use it to confirm files
-if filelist and not valid_archive(
-        basepath,
-        filelist,
-        corrupt_files,
-        files) and not cmdline.force:
-    sys.exit(1)
-elif old_filelist:
-    logging.warning(
-        'Using older "filelist.txt" instead of new format using file ending in ".lst"')
-    if not valid_archive(
-        basepath,
-        "filelist.txt",
-        corrupt_files,
-        files) and not cmdline.force:
+    for sig in (signal.SIGINT, getattr(signal, 'SIGTERM', None)):
+        if sig is not None:
+            try:
+                signal.signal(sig, _sig_wipe_keyring)
+            except (ValueError, OSError):
+                pass
+
+single_backup_cleanup_work = None
+try:
+    basepath, files, all_basenames = getBackupFiles(cmdline.backup)
+    logging.info('Located backup in "%s"', basepath)
+    logging.info('Detected backup files: %s', ', '.join(files))
+
+    if cmdline.all and (all_basenames is None or len(all_basenames) <= 1):
+        logging.warning('--all ignored (backup path is a single backup, not a directory of backups)')
+        cmdline.all = False
+
+    # Multiple backups in folder: list and exit unless --all with --restore
+    if all_basenames is not None and len(all_basenames) > 1:
+        if cmdline.all and cmdline.restore:
+            run_multi_archive_restore(
+                basepath, all_basenames, restore_base, restore_gpg, config, cmdline,
+                keyring_dir=temp_keyring_dir if cmdline.key_file else None)
+            sys.exit(0)
+        if cmdline.all and not cmdline.restore:
+            logging.error('--all requires --restore and a directory containing multiple backups')
+            sys.exit(1)
+        # List backups and call out any chain gaps; --list only works for a single backup
+        logging.info(
+            'Multiple backups in folder (%d). Use --all to restore all in order, '
+            'or specify a single backup prefix to restore one.',
+            len(all_basenames))
+        if cmdline.list:
+            logging.info('--list only works for a single backup; specify a backup prefix to list contents.')
+        missing = get_chain_gaps(basepath, all_basenames, restore_gpg, config)
+        if missing:
+            logging.warning(
+                'Backup(s) not found in folder: %s. Restored set may be incomplete.',
+                ', '.join(sorted(missing)))
+        for name in all_basenames:
+            logging.info('  %s', name)
+        sys.exit(0)
+
+    # Resolve basename from files (established patterns only)
+    basename = None
+    for f in files:
+        for suffix in MANIFEST_SUFFIXES + ARCHIVE_SUFFIXES:
+            if f.endswith(suffix):
+                basename = f[:-len(suffix)]
+                break
+        if basename:
+            break
+    if not basename:
+        logging.error('Could not determine backup basename from files')
         sys.exit(1)
 
+    file_manifest_path = get_manifest_file(basepath, basename)
+    file_archive_path = get_archive_file(basepath, basename)
+    filelist_path = get_filelist_file(basepath, basename)
+    if not file_manifest_path:
+        if cmdline.force:
+            logging.error(
+                "No manifest found, unable to restore. Will try to verify and repair if needed")
+        else:
+            logging.error(
+                "No manifest found, unable to restore (use --force to do as much as possible)")
+            sys.exit(1)
+    if not file_archive_path:
+        logging.error("No archive found, unable to continue")
+        sys.exit(1)
 
-# Strip all files except the archive (verify signatures and decrypt)
-# since archive might need repairs and for that we need PAR2
-logging.info('Validating metadata files')
-do_manifest = cmdline.list or cmdline.restore or cmdline.validate
+    file_archive = os.path.basename(file_archive_path)
+    parity_files = get_parity_files(basepath, file_archive)
+    logging.debug('Using manifest "%s"', os.path.basename(file_manifest_path))
+    if parity_files:
+        logging.debug("Parity is available")
 
-for f in files:
-    if f in corrupt_files:
-        continue
-    if f == file_archive:
-        continue
-    if not validate_file(os.path.join(basepath, f)):
-        logging.warning('Skipping "%s" due to failed validation', f)
-        continue
+    detect_leftovers(basepath, basename, file_manifest_path, file_archive_path, filelist_path)
 
-    # Do not extract files we don't need (ie, when not extracting)
+    # Work dir for stripped/decrypted files (never in source folder; avoid filling temp)
+    work_dir = None
+    single_backup_cleanup_work = None
+    if cmdline.list or cmdline.restore or cmdline.validate:
+        if cmdline.restore:
+            work_dir = os.path.normpath(_restore_temp_dir(restore_base, cmdline))
+            try:
+                os.makedirs(work_dir, exist_ok=True)
+            except OSError as exc:
+                logging.error('Cannot create restore temp dir "%s": %s', work_dir, exc)
+                sys.exit(1)
+            if _path_inside(os.path.abspath(basepath), os.path.abspath(work_dir)):
+                work_dir = tempfile.mkdtemp(prefix='iceshelf-restore.')
+                single_backup_cleanup_work = work_dir
+        else:
+            work_dir = tempfile.mkdtemp(prefix='iceshelf-restore.')
+            single_backup_cleanup_work = work_dir
+
+    # If we have a filelist, strip it first then run valid_archive
+    corrupt_files = []
+    found_files = []
+    if filelist_path:
+        list_basename = os.path.basename(filelist_path)
+        if not validate_file(filelist_path, restore_gpg):
+            logging.warning('Skipping filelist "%s" due to failed validation', list_basename)
+            filelist_path = None
+        elif cmdline.list or cmdline.restore or cmdline.validate:
+            stripped_list = strip_file(filelist_path, restore_gpg, work_dir=work_dir)
+            if stripped_list is None:
+                logging.warning('Unable to process filelist "%s"', list_basename)
+                filelist_path = None
+            else:
+                if not valid_archive(basepath, stripped_list, corrupt_files, found_files):
+                    if not cmdline.force:
+                        sys.exit(1)
+                filelist_path = stripped_list
+    elif os.path.isfile(os.path.join(basepath, 'filelist.txt')):
+        logging.warning(
+            'Using older "filelist.txt" instead of new format using file ending in ".lst"')
+        if not valid_archive(basepath, os.path.join(basepath, 'filelist.txt'), corrupt_files, found_files):
+            if not cmdline.force:
+                sys.exit(1)
+
+    logging.info('Validating metadata files')
+    do_manifest = cmdline.list or cmdline.restore or cmdline.validate
+
+    if not validate_file(file_manifest_path, restore_gpg):
+        logging.error('Manifest validation failed. Ensure it is signed with a key in your keyring.')
+        if not cmdline.force:
+            sys.exit(1)
+    stripped_manifest = strip_file(file_manifest_path, restore_gpg, work_dir=work_dir) if do_manifest else None
+    if do_manifest and stripped_manifest is None:
+        logging.error('Unable to process manifest')
+        sys.exit(1)
+    file_manifest = stripped_manifest if stripped_manifest else file_manifest_path
+    if do_manifest and not os.path.exists(file_manifest):
+        logging.error('No valid manifest found, aborting')
+        sys.exit(1)
+
     if not do_manifest:
-        continue
+        sys.exit(0)
 
-    n = strip_file(os.path.join(basepath, f))
-    if n is None:
-        logging.warning('Unable to process "%s"', f)
-        continue
-    processed_files.append(n)
-    if n.endswith('.json'):
-        file_manifest = n
-
-if not file_manifest or not os.path.exists(file_manifest):
-    logging.error('No valid manifest found, aborting')
-    sys.exit(1)
-
-if not do_manifest:
-    sys.exit(0)
-
-if (cmdline.restore or cmdline.repair) and file_parity is not None and len(
-        corrupt_files) > 0:
-    logging.info('Attempting repair of "%s"', file_archive)
-    for f in processed_files:
-        if f.endswith(file_archive + '.par2'):
-            if not fileutils.repairParity(f):
+    if (cmdline.restore or cmdline.repair) and parity_files and len(corrupt_files) > 0:
+        main_par2 = os.path.join(basepath, file_archive + '.par2')
+        if main_par2 in parity_files and os.path.isfile(main_par2):
+            logging.info('Attempting repair of "%s"', file_archive)
+            if not fileutils.repairParity(main_par2):
                 logging.error(
                     "Failed to repair file, not enough parity material")
                 sys.exit(1)
-            else:
-                logging.info('File was repaired successfully')
-            break
+            logging.info('File was repaired successfully')
 
-# Strip the archive
-if cmdline.restore:
-    logging.info('Preparing to restore files to "%s"', cmdline.restore)
-    logging.info('Validating archive file "%s"', file_archive)
-    if not validate_file(os.path.join(basepath, file_archive)):
-        logging.error('File "%s" signature does not match', file_archive)
-        if not cmdline.force:
+    # Strip the archive
+    if cmdline.restore:
+        logging.info('Preparing to restore files to "%s"', cmdline.restore)
+        logging.info('Validating archive file "%s"', file_archive)
+        if not validate_file(os.path.join(basepath, file_archive), restore_gpg):
+            logging.error('File "%s" signature does not match', file_archive)
+            if not cmdline.force:
+                sys.exit(1)
+        archive = strip_file(os.path.join(basepath, file_archive), restore_gpg, work_dir=work_dir)
+        if archive is None:
+            logging.error('Unable to process "%s"', file_archive)
             sys.exit(1)
-    archive = strip_file(os.path.join(basepath, file_archive))
-    if archive is None:
-        logging.error('Unable to process "%s"', file_archive)
-        sys.exit(1)
 
-
-if file_manifest is None:
-    logging.info(
-        'This is as much as can be done. You can now manually extract the files')
-    sys.exit(0)
-
-# And now... restore
-manifest = None
-with open(file_manifest, encoding='utf-8') as fp:
-    manifest = json.load(fp)
-
-# If last backup is defined, check it
-if cmdline.lastbackup is not None:
-    if 'lastbackup' not in manifest:
-        logging.debug(
-            'This backup does not specify a previous backup '
-            '(made with an older version of iceshelf)')
-    if 'lastbackup' not in manifest or manifest['lastbackup'] != cmdline.lastbackup:
-        logging.error(
-            'Backup "%s" is not the successor of "%s"',
-            os.path.basename(file_manifest)[0:-5],
-            cmdline.lastbackup)
-        sys.exit(1)
-
-# If available, show which backup that preceeded it
-if cmdline.list:
-    if 'lastbackup' in manifest:
+    if file_manifest is None:
         logging.info(
-            'Manifest: Parent backup is "%s"',
-            manifest['lastbackup'])
-    else:
-        logging.debug('Manifest: Does not contain parent reference')
+            'This is as much as can be done. You can now manually extract the files')
+        sys.exit(0)
 
-# Now, print the files we're changing or creating
-filecount = 0
-fileerror = 0
-for k in manifest['modified']:
-    v = manifest['modified'][k]
-    src = os.path.normpath(restore_base + k)
+    # And now... restore
+    manifest = None
+    with open(file_manifest, encoding='utf-8') as fp:
+        manifest = json.load(fp)
+
+    # If last backup is defined, check it (accept lastbackup or previousbackup)
+    parent_backup = manifest.get('lastbackup') or manifest.get('previousbackup')
+    if cmdline.lastbackup is not None:
+        if not parent_backup:
+            logging.debug(
+                'This backup does not specify a previous backup '
+                '(made with an older version of iceshelf)')
+        if parent_backup != cmdline.lastbackup:
+            logging.error(
+                'Backup "%s" is not the successor of "%s"',
+                basename,
+                cmdline.lastbackup)
+            sys.exit(1)
+
+    # If available, show which backup that preceeded it
     if cmdline.list:
-        logging.info(
-            'Manifest: Modified or new file "%s" in "%s"',
-            os.path.basename(k),
-            os.path.dirname(k))
-    filecount += 1
+        if parent_backup:
+            logging.info(
+                'Manifest: Parent backup is "%s"',
+                parent_backup)
+        else:
+            logging.debug('Manifest: Does not contain parent reference')
 
-# Iterate the archive and make sure we know what's in it
-if cmdline.restore:
-    with tarfile.open(archive, "r:*") as tar:
-        item = tar.next()
-        while item is not None:
-            if '/' + item.name not in manifest['modified']:
-                logging.error(
-                    'Archive contains "%s", not listed in the manifest',
-                    item.name)
-                fileerror += 1
-            else:
-                manifest['modified']['/' + item.name]['found'] = True
-                filecount -= 1
-            item = tar.next()
+    # Report data for single-backup restore (always when --restore)
+    if cmdline.restore:
+        merged_single = {}
+        for path, meta in manifest.get('modified', {}).items():
+            path = _norm_path(path)
+            merged_single[path] = (basename, path, meta.get('checksum', ''))
+        for newpath, info in manifest.get('moved', {}).items():
+            newpath = _norm_path(newpath)
+            checksum = ''
+            if newpath in manifest.get('modified', {}):
+                checksum = manifest['modified'][newpath].get('checksum', '')
+            merged_single[newpath] = (basename, newpath, checksum)
+        archive_names_single = [file_archive]
+        deleted_list_single = [
+            (_norm_path(p), parent_backup or '—', basename)
+            for p in manifest.get('deleted', [])]
+        moved_info_single = {}
+        for newpath, info in manifest.get('moved', {}).items():
+            newpath = _norm_path(newpath)
+            moved_info_single[newpath] = (
+                _norm_path(info.get('original', '')),
+                info.get('reference', basename))
+        restore_outcome_single = {}
+        restore_failed_single = False
 
-    # Check that all files we were looking for was in the archive
+    # Now, print the files we're changing or creating
+    filecount = 0
+    fileerror = 0
     for k in manifest['modified']:
-        if 'found' not in manifest['modified'][k]:
-            logging.error('Archive is missing "%s"', k)
-            fileerror += 1
+        v = manifest['modified'][k]
+        src = os.path.normpath(restore_base + k)
+        if cmdline.list:
+            logging.info(
+                'Manifest: Modified or new file "%s" in "%s" (archive: %s)',
+                os.path.basename(k),
+                os.path.dirname(k),
+                file_archive)
+        filecount += 1
 
-    if fileerror != 0 or filecount != 0:
-        logging.error("Archive contains errors, aborting")
-        sys.exit(1)
-
-# Step 1: Remove any files that were deleted
-for f in manifest['deleted']:
-    src = os.path.normpath(restore_base + f)
-    if cmdline.list:
-        logging.info('Manifest: Deleting "%s"', src)
+    # Iterate the archive and make sure we know what's in it
     if cmdline.restore:
+        with tarfile.open(archive, "r:*") as tar:
+            item = tar.next()
+            while item is not None:
+                if '/' + item.name not in manifest['modified']:
+                    logging.error(
+                        'Archive contains "%s", not listed in the manifest',
+                        item.name)
+                    fileerror += 1
+                else:
+                    manifest['modified']['/' + item.name]['found'] = True
+                    filecount -= 1
+                item = tar.next()
+
+        # Check that all files we were looking for was in the archive
+        for k in manifest['modified']:
+            if 'found' not in manifest['modified'][k]:
+                logging.error('Archive is missing "%s"', k)
+                fileerror += 1
+
+        if fileerror != 0 or filecount != 0:
+            restore_failed_single = True
+            write_restore_report(
+                restore_base, archive_names_single, merged_single, deleted_list_single,
+                moved_info_single, restore_outcome_single, failed=True)
+            logging.error("Archive contains errors, aborting")
+            sys.exit(1)
+
+    # Step 1: Remove any files that were deleted
+    for f in manifest['deleted']:
+        src = os.path.normpath(restore_base + f)
+        if cmdline.list:
+            logging.info('Manifest: Deleting "%s"', src)
+        if cmdline.restore:
+            try:
+                os.unlink(src)
+            except OSError as e:
+                logging.warning('Unable to remove "%s": %s', src, e)
+
+    for k in manifest['moved']:
+        v = manifest['moved'][k]
+        src = os.path.normpath(restore_base + v['original'])
+        dst = os.path.normpath(restore_base + k)
+        if cmdline.list:
+            logging.info('Manifest: Moving "%s" to "%s"', src, dst)
+        if cmdline.restore:
+            try:
+                os.rename(src, dst)
+            except OSError as e:
+                logging.warning('Unable to move "%s" to "%s": %s', src, dst, e)
+
+    # Finally, if not a dryrun
+    if not cmdline.restore:
+        sys.exit(0)
+
+    # Time to extract the files (with conflict check before each)
+    conflict_mode = cmdline.conflict
+    verbose = getattr(cmdline, 'verbose', False)
+    total_files = len(manifest.get('modified', {}))
+    processed = 0
+    try:
         try:
-            os.unlink(src)
-        except OSError as e:
-            logging.warning('Unable to remove "%s": %s', src, e)
-
-for k in manifest['moved']:
-    v = manifest['moved'][k]
-    src = os.path.normpath(restore_base + v['original'])
-    dst = os.path.normpath(restore_base + k)
-    if cmdline.list:
-        logging.info('Manifest: Moving "%s" to "%s"', src, dst)
-    if cmdline.restore:
+            with tarfile.open(archive, "r:*") as tar:
+                item = tar.next()
+                while item is not None:
+                    target_path = os.path.normpath(restore_base + '/' + item.name)
+                    manifest_key = '/' + item.name
+                    checksum = ''
+                    if manifest_key in manifest.get('modified', {}):
+                        checksum = manifest['modified'][manifest_key].get('checksum', '')
+                    decision = check_conflict(target_path, checksum, conflict_mode)
+                    if decision == 'abort':
+                        restore_failed_single = True
+                        logging.error(
+                            'Conflict at "%s" (file exists). Use --conflict replace to overwrite or '
+                            '--conflict skipsame to skip only when content matches.',
+                            target_path)
+                        sys.exit(1)
+                    if decision == 'skip':
+                        restore_outcome_single[manifest_key] = 'skipped'
+                        if verbose:
+                            logging.info('Skipping existing "%s"', target_path)
+                        processed += 1
+                        if not verbose and total_files > 0:
+                            pct = 100 * processed // total_files
+                            sys.stdout.write(
+                                '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
+                            sys.stdout.flush()
+                        item = tar.next()
+                        continue
+                    if conflict_mode == 'replace' and os.path.exists(target_path):
+                        try:
+                            if os.path.isdir(target_path) and not os.path.islink(target_path):
+                                shutil.rmtree(target_path)
+                            else:
+                                os.unlink(target_path)
+                        except OSError as exc:
+                            logging.warning('Unable to remove existing "%s": %s', target_path, exc)
+                    if verbose:
+                        logging.info(
+                            'Extracting "%s" to "%s"',
+                            os.path.basename(target_path),
+                            os.path.dirname(target_path))
+                    tar.extract(item, cmdline.restore)
+                    restore_outcome_single[manifest_key] = 'restored'
+                    processed += 1
+                    if not verbose and total_files > 0:
+                        pct = 100 * processed // total_files
+                        sys.stdout.write(
+                            '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
+                        sys.stdout.flush()
+                    item = tar.next()
+        except Exception:
+            restore_failed_single = True
+            raise
+    finally:
+        if cmdline.restore:
+            write_restore_report(
+                restore_base, archive_names_single, merged_single, deleted_list_single,
+                moved_info_single, restore_outcome_single, failed=restore_failed_single)
+    if not verbose and total_files > 0:
+        sys.stdout.write('\n')
+        sys.stdout.flush()
+    logging.info("Backup has been restored")
+finally:
+    if single_backup_cleanup_work and os.path.isdir(single_backup_cleanup_work):
         try:
-            os.rename(src, dst)
-        except OSError as e:
-            logging.warning('Unable to move "%s" to "%s": %s', src, dst, e)
-
-# Finally, if not a dryrun
-if not cmdline.restore:
-    sys.exit(0)
-
-# Time to extract the files
-with tarfile.open(archive, "r:*") as tar:
-    item = tar.next()
-    while item is not None:
-        target_path = os.path.normpath(restore_base + '/' + item.name)
-        logging.info(
-            'Extracting "%s" to "%s"',
-            os.path.basename(target_path),
-            os.path.dirname(target_path))
-        tar.extract(item, cmdline.restore)
-        item = tar.next()
-logging.info("Backup has been restored")
+            shutil.rmtree(single_backup_cleanup_work)
+        except OSError as exc:
+            logging.warning('Could not remove temp work dir %s: %s', single_backup_cleanup_work, exc)
+    if temp_keyring_dir and 'GNUPGHOME' in os.environ and os.environ['GNUPGHOME'] == temp_keyring_dir:
+        if old_gnupghome is not None:
+            os.environ['GNUPGHOME'] = old_gnupghome
+        else:
+            del os.environ['GNUPGHOME']
+    secure_wipe_temp_dir(temp_keyring_dir)
