@@ -519,21 +519,23 @@ def _dest_has_same_checksum(dest_path, manifest_checksum):
 def check_conflict(restore_path, manifest_checksum, conflict_mode):
     """
     Check if restoring to restore_path would conflict with an existing path.
-    Returns: 'proceed' | 'skip' | 'abort'. On 'abort' the caller should sys.exit(1).
+    Returns: (decision, skip_reason) where decision is 'proceed' | 'skip' | 'abort'.
+    skip_reason is a human-readable string when decision == 'skip', else None.
+    On 'abort' the caller should sys.exit(1).
     """
     if not os.path.exists(restore_path):
-        return 'proceed'
+        return ('proceed', None)
     if conflict_mode == 'replace':
-        return 'proceed'
+        return ('proceed', None)
     if conflict_mode == 'skipall':
-        return 'skip'
+        return ('skip', 'already existed (--conflict skipall)')
     if conflict_mode == 'abort':
-        return 'abort'
+        return ('abort', None)
     if conflict_mode == 'skipsame':
         if os.path.isfile(restore_path) and _dest_has_same_checksum(restore_path, manifest_checksum):
-            return 'skip'
-        return 'abort'
-    return 'proceed'
+            return ('skip', 'already existed, same content (--conflict skipsame)')
+        return ('abort', None)
+    return ('proceed', None)
 
 
 def get_files_for_basename(basepath, basename):
@@ -727,18 +729,24 @@ REPORT_FILENAME = 'iceshelf-restore-report.txt'
 
 
 def write_restore_report(restore_base, archive_names, merged, deleted_list, moved_info,
-                         restore_outcome, failed=False):
+                         restore_outcome, failed=False, skip_reasons=None, invocation=None):
     """
     Write iceshelf-restore-report.txt in the root of restore_base.
     merged: dict path -> (backup_id, path_in_archive, checksum) for all paths that were to be restored.
     deleted_list: list of (path, introduced_in, deleted_in).
     moved_info: dict path -> (original_path, reference_backup) for paths that were moved.
     restore_outcome: dict path -> 'restored' | 'skipped' (only 'restored' appear in Restored section).
+    skip_reasons: dict path -> reason string for paths that were skipped (conflict resolution).
+    invocation: command line string to record how the tool was invoked.
     """
+    if skip_reasons is None:
+        skip_reasons = {}
     lines = []
     lines.append('iceshelf-restore audit report')
     lines.append('Date: %s' % time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
     lines.append('Destination: %s' % os.path.normpath(restore_base or '.'))
+    if invocation:
+        lines.append('Command: %s' % invocation)
     if failed:
         lines.append('Restore status: failed')
     lines.append('')
@@ -756,6 +764,13 @@ def write_restore_report(restore_base, archive_names, merged, deleted_list, move
             orig, ref = moved_info[path]
             part += '; introduced in %s as %s, moved to %s in %s' % (ref, orig, path, backup_id)
         lines.append(part)
+    lines.append('')
+    lines.append('=== Not restored (skipped) ===')
+    for path in sorted(restore_outcome.keys()):
+        if restore_outcome.get(path) != 'skipped':
+            continue
+        reason = skip_reasons.get(path, 'unknown')
+        lines.append('%s — %s' % (path, reason))
     lines.append('')
     lines.append('=== Not restored (deleted) ===')
     for path, introduced_in, deleted_in in sorted(deleted_list, key=lambda x: x[0]):
@@ -855,6 +870,7 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
     deleted_list = build_deleted_list_multi(manifests_by_basename, all_basenames)
     moved_info = build_moved_info_multi(manifests_by_basename, merged)
     restore_outcome = {}
+    skip_reasons = {}
     restore_failed = False
 
     # 4) Extract: group by backup, then for each path apply conflict check and extract
@@ -908,7 +924,7 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                     with tarfile.open(stripped, "r:*") as tar:
                         for restore_path, path_in_archive, checksum in by_backup[backup_id]:
                             dest_full = os.path.normpath(restore_base + restore_path)
-                            decision = check_conflict(dest_full, checksum, conflict_mode)
+                            decision, skip_reason = check_conflict(dest_full, checksum, conflict_mode)
                             if decision == 'abort':
                                 restore_failed = True
                                 logging.error(
@@ -918,6 +934,7 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                                 sys.exit(1)
                             if decision == 'skip':
                                 restore_outcome[restore_path] = 'skipped'
+                                skip_reasons[restore_path] = skip_reason or 'unknown'
                                 if verbose:
                                     logging.info('Skipping existing "%s"', dest_full)
                                 processed += 1
@@ -1011,7 +1028,8 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                 pass
         write_restore_report(
             restore_base, archive_names, merged, deleted_list, moved_info,
-            restore_outcome, failed=restore_failed)
+            restore_outcome, failed=restore_failed, skip_reasons=skip_reasons,
+            invocation=' '.join(sys.argv))
 
     if not verbose and total_files > 0:
         sys.stdout.write('\n')
@@ -1556,6 +1574,7 @@ try:
                 _norm_path(info.get('original', '')),
                 info.get('reference', basename))
         restore_outcome_single = {}
+        skip_reasons_single = {}
         restore_failed_single = False
 
     # Now, print the files we're changing or creating
@@ -1597,7 +1616,8 @@ try:
             restore_failed_single = True
             write_restore_report(
                 restore_base, archive_names_single, merged_single, deleted_list_single,
-                moved_info_single, restore_outcome_single, failed=True)
+                moved_info_single, restore_outcome_single, failed=True,
+                skip_reasons=skip_reasons_single, invocation=' '.join(sys.argv))
             logging.error("Archive contains errors, aborting")
             sys.exit(1)
 
@@ -1643,7 +1663,7 @@ try:
                     checksum = ''
                     if manifest_key in manifest.get('modified', {}):
                         checksum = manifest['modified'][manifest_key].get('checksum', '')
-                    decision = check_conflict(target_path, checksum, conflict_mode)
+                    decision, skip_reason = check_conflict(target_path, checksum, conflict_mode)
                     if decision == 'abort':
                         restore_failed_single = True
                         logging.error(
@@ -1653,6 +1673,7 @@ try:
                         sys.exit(1)
                     if decision == 'skip':
                         restore_outcome_single[manifest_key] = 'skipped'
+                        skip_reasons_single[manifest_key] = skip_reason or 'unknown'
                         if verbose:
                             logging.info('Skipping existing "%s"', target_path)
                         processed += 1
@@ -1692,7 +1713,8 @@ try:
         if cmdline.restore:
             write_restore_report(
                 restore_base, archive_names_single, merged_single, deleted_list_single,
-                moved_info_single, restore_outcome_single, failed=restore_failed_single)
+                moved_info_single, restore_outcome_single, failed=restore_failed_single,
+                skip_reasons=skip_reasons_single, invocation=' '.join(sys.argv))
     if not verbose and total_files > 0:
         sys.stdout.write('\n')
         sys.stdout.flush()
