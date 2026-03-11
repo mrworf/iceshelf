@@ -309,7 +309,9 @@ def strip_file(filename, keyring_dir=None, output_path=None, work_dir=None,
                     out_size = os.path.getsize(next_path) if os.path.exists(next_path) else 0
                     out_mb = out_size / (1024 * 1024)
                     orig_mb = progress_original_size / (1024 * 1024)
-                    if current.endswith('.sig') or current.endswith('.asc'):
+                    if two_layers:
+                        msg = '\r  Verifying and decrypting... %.1f MB (original file %.1f MB)    '
+                    elif current.endswith('.sig') or current.endswith('.asc'):
                         msg = '\r  Verifying signature... %.1f MB (original file %.1f MB)    '
                     else:
                         msg = '\r  Decrypted %.1f MB (original file %.1f MB)    '
