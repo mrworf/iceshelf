@@ -587,13 +587,14 @@ def getBackupFiles(itemFromBackup):
     return (backup_dir, matched_files, all_basenames)
 
 
-def _dest_has_same_checksum(dest_path, manifest_checksum):
-    """Return True if the file at dest_path has the same checksum as manifest_checksum."""
+def _dest_has_same_checksum(dest_path, manifest_checksum, progress_callback=None):
+    """Return True if the file at dest_path has the same checksum as manifest_checksum.
+    progress_callback(bytes_done, total) is used during hash if provided."""
     if not manifest_checksum or not os.path.isfile(dest_path):
         return False
     if ':' in manifest_checksum:
         algo = manifest_checksum.split(':', 1)[1]
-        current = fileutils.hashFile(dest_path, algo, True)
+        current = fileutils.hashFile(dest_path, algo, True, progress_callback=progress_callback)
         return current == manifest_checksum
     # Legacy hex-only checksum: infer algorithm from length and compare
     length = len(manifest_checksum)
@@ -612,7 +613,7 @@ def _dest_has_same_checksum(dest_path, manifest_checksum):
         algo = 'sha512'
     if algo is None:
         return False
-    current = fileutils.hashFile(dest_path, algo, False)
+    current = fileutils.hashFile(dest_path, algo, False, progress_callback=progress_callback)
     return current == manifest_checksum
 
 
@@ -627,8 +628,6 @@ def check_conflict(restore_path, manifest_checksum, conflict_mode):
         return ('proceed', None)
     if conflict_mode == 'replace':
         return ('proceed', None)
-    if conflict_mode == 'skipall':
-        return ('skip', 'already existed (--conflict skipall)')
     if conflict_mode == 'abort':
         return ('abort', None)
     if conflict_mode == 'skipsame':
@@ -758,16 +757,44 @@ def merge_manifests(manifests_by_basename):
             path = path if path.startswith('/') else '/' + path
             merged.pop(path, None)
         for newpath, info in manifest.get('moved', {}).items():
-            info = _normalize_moved_entry(info, backup_id)
-            newpath = newpath if newpath.startswith('/') else '/' + newpath
-            oldpath = info.get('original', '')
-            oldpath = oldpath if oldpath.startswith('/') else '/' + oldpath
-            merged.pop(oldpath, None)
-            # Content at newpath is in this backup's modified set
-            checksum = ''
-            if 'modified' in manifest and newpath in manifest['modified']:
-                checksum = manifest['modified'][newpath].get('checksum', '')
-            merged[newpath] = (backup_id, newpath, checksum)
+            raw_info = info
+            key_normalized = newpath if newpath.startswith('/') else '/' + newpath
+            if isinstance(raw_info, str):
+                # Legacy format: moved[old_path] = new_path (string)
+                # Restore path = value (new path); key = old path
+                restore_path = raw_info if raw_info.startswith('/') else '/' + raw_info
+                oldpath = key_normalized
+                merged.pop(oldpath, None)
+                # Resolve which backup has this file (newest first)
+                ref_id = backup_id
+                path_in_archive = restore_path
+                checksum = ''
+                for cand_id in reversed(manifests_by_basename):
+                    cand = manifests_by_basename[cand_id]
+                    mod = cand.get('modified', {})
+                    if restore_path in mod:
+                        ref_id = cand_id
+                        path_in_archive = restore_path
+                        checksum = mod[restore_path].get('checksum', '')
+                        break
+                    if oldpath in mod:
+                        ref_id = cand_id
+                        path_in_archive = oldpath
+                        checksum = mod[oldpath].get('checksum', '')
+                        break
+                merged[restore_path] = (ref_id, path_in_archive, checksum)
+            else:
+                # Dict format: restore path = key (newpath), file at original in reference backup
+                info = _normalize_moved_entry(info, backup_id)
+                oldpath = info.get('original', '')
+                oldpath = oldpath if oldpath.startswith('/') else '/' + oldpath
+                merged.pop(oldpath, None)
+                ref_id = info.get('reference', backup_id)
+                path_in_archive = oldpath
+                checksum = ''
+                if 'modified' in manifest and key_normalized in manifest['modified']:
+                    checksum = manifest['modified'][key_normalized].get('checksum', '')
+                merged[key_normalized] = (ref_id, path_in_archive, checksum)
         for path, meta in manifest.get('modified', {}).items():
             path = path if path.startswith('/') else '/' + path
             checksum = meta.get('checksum', '')
@@ -908,6 +935,84 @@ def _restore_temp_dir(restore_base, cmdline):
     return os.path.normpath(os.path.join(restore_base or '.', raw))
 
 
+def _completed_lst_path(restore_base, cmdline):
+    """Return path to .restore/completed.lst for resumable restore progress."""
+    return os.path.join(_restore_temp_dir(restore_base, cmdline), 'completed.lst')
+
+
+def _load_completed_lst(completed_lst_path):
+    """Load completed.lst; return dict path -> expected size. Skip malformed lines. Return {} if missing."""
+    result = {}
+    if not os.path.isfile(completed_lst_path):
+        return result
+    try:
+        with open(completed_lst_path, 'r', encoding='utf-8') as fp:
+            for line in fp:
+                line = line.rstrip('\n')
+                if not line:
+                    continue
+                parts = line.split('\t', 1)
+                if len(parts) != 2:
+                    logging.debug('Skipping malformed completed.lst line: %s', line[:80])
+                    continue
+                path, size_str = parts
+                try:
+                    result[path] = int(size_str)
+                except ValueError:
+                    logging.debug('Skipping completed.lst line with invalid size: %s', line[:80])
+    except OSError as exc:
+        logging.warning('Could not read completed.lst %s: %s', completed_lst_path, exc)
+    return result
+
+
+def _apply_completed_lst(restore_base, completed_lst_path, merged_paths, restore_outcome, skip_reasons):
+    """
+    Apply completed.lst: for each entry, if path in merged_paths and file exists with matching size,
+    add to verified set and mark skipped. If size mismatch, remove file so it can be restored again.
+    Return set of paths that were verified (caller adds to pre_skipped_paths).
+    """
+    merged_set = set(merged_paths)
+    loaded = _load_completed_lst(completed_lst_path)
+    verified = set()
+    for path, expected_size in loaded.items():
+        if path not in merged_set:
+            continue
+        dest_full = os.path.normpath(restore_base + path)
+        if not os.path.isfile(dest_full):
+            continue
+        try:
+            actual_size = os.path.getsize(dest_full)
+        except OSError:
+            continue
+        if actual_size == expected_size:
+            verified.add(path)
+            restore_outcome[path] = 'skipped'
+            skip_reasons[path] = 'completed in previous run (size match)'
+        else:
+            try:
+                os.unlink(dest_full)
+            except OSError as exc:
+                logging.warning('Could not remove %s for re-restore: %s', dest_full, exc)
+    return verified
+
+
+def _append_completed_lst(completed_lst_path, restore_path, size):
+    """Append one path+size line to completed.lst; ensure parent dir exists; flush for durability."""
+    parent = os.path.dirname(completed_lst_path)
+    if parent:
+        try:
+            os.makedirs(parent, exist_ok=True)
+        except OSError as exc:
+            logging.warning('Could not create directory for completed.lst: %s', exc)
+            return
+    try:
+        with open(completed_lst_path, 'a', encoding='utf-8') as fp:
+            fp.write(restore_path + '\t' + str(size) + '\n')
+            fp.flush()
+    except OSError as exc:
+        logging.warning('Could not append to completed.lst: %s', exc)
+
+
 def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg, config, cmdline, keyring_dir=None):
     """Restore all backups in order to restore_base, merging state and applying conflict policy."""
     # 1) Load manifests: for each backup validate+strip manifest, load manifest (no archive decryption yet)
@@ -995,6 +1100,46 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
     total_files = sum(len(entries) for entries in by_backup.values())
     processed = 0
 
+    # Resumable restore: apply completed.lst (size match -> skip; mismatch -> remove file for re-restore)
+    completed_lst_path = _completed_lst_path(restore_base, cmdline)
+    verified = _apply_completed_lst(restore_base, completed_lst_path, merged.keys(), restore_outcome, skip_reasons)
+    pre_skipped_paths = set(verified)
+
+    # Preemptive skip: check destination before opening any archive (saves time on resume)
+    if conflict_mode == 'skipsame':
+        merged_list = list(merged.items())
+        total_to_check = len(merged_list)
+        sys.stderr.write('Locating already restored files\n')
+        sys.stderr.flush()
+        for idx, (restore_path, (_backup_id, _path_in_archive, checksum)) in enumerate(merged_list, 1):
+            dest_full = os.path.normpath(restore_base + restore_path)
+            pct_overall = 100 * idx // total_to_check if total_to_check else 0
+            if not os.path.isfile(dest_full):
+                sys.stderr.write(
+                    '\rChecking file %d of %d (%d%%): not present.    '
+                    % (idx, total_to_check, pct_overall))
+                sys.stderr.flush()
+            else:
+                def _hash_progress(bytes_done, total):
+                    pct_file = 100 * bytes_done // total if total else 0
+                    sys.stderr.write(
+                        '\rChecking file %d of %d (%d%%): Calculating, %d%% done.    '
+                        % (idx, total_to_check, pct_overall, pct_file))
+                    sys.stderr.flush()
+                if _dest_has_same_checksum(dest_full, checksum, progress_callback=_hash_progress):
+                    pre_skipped_paths.add(restore_path)
+                    restore_outcome[restore_path] = 'skipped'
+                    skip_reasons[restore_path] = 'already existed, same content (--conflict skipsame)'
+                    _append_completed_lst(completed_lst_path, restore_path, os.path.getsize(dest_full))
+        if merged_list:
+            sys.stderr.write('\n')
+            sys.stderr.flush()
+            n_found = len(pre_skipped_paths)
+            pct_found = 100 * n_found // total_to_check if total_to_check else 0
+            sys.stderr.write('Found %d of %d (%d%%). %d to restore.\n' % (
+                n_found, total_to_check, pct_found, total_to_check - n_found))
+            sys.stderr.flush()
+
     try:
         try:
             for ext_idx, backup_id in enumerate(all_basenames, 1):
@@ -1005,6 +1150,20 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                     sys.stderr.write('\n')
                     sys.stderr.flush()
                 n_files = len(by_backup[backup_id])
+                # Skip opening archive if all its files are already pre-skipped
+                entries_this_backup = by_backup[backup_id]
+                if all(rp in pre_skipped_paths for rp, _pi, _cs in entries_this_backup):
+                    logging.info(
+                        'Skipping archive %s (all %d file(s) already present)',
+                        backup_id, n_files)
+                    for _ in entries_this_backup:
+                        processed += 1
+                        if not verbose and total_files > 0:
+                            pct = 100 * processed // total_files
+                            sys.stderr.write(
+                                '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
+                            sys.stderr.flush()
+                    continue
                 logging.info(
                     'Extracting from backup %d/%d: %s (%d file(s))',
                     ext_idx, n_backups, backup_id, n_files)
@@ -1042,18 +1201,28 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                         stripped, os.path.getsize(stripped), progress_interval=5)
                     with tar:
                         for restore_path, path_in_archive, checksum in by_backup[backup_id]:
+                            if restore_path in pre_skipped_paths:
+                                processed += 1
+                                if not verbose and total_files > 0:
+                                    pct = 100 * processed // total_files
+                                    sys.stderr.write(
+                                        '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
+                                    sys.stderr.flush()
+                                continue
                             dest_full = os.path.normpath(restore_base + restore_path)
                             decision, skip_reason = check_conflict(dest_full, checksum, conflict_mode)
                             if decision == 'abort':
                                 restore_failed = True
                                 logging.error(
-                                    'Conflict at "%s" (file exists). Use --conflict replace to overwrite or '
-                                    '--conflict skipsame to skip only when content matches.',
+                                    'Conflict at "%s" (file exists, content differs). '
+                                    'Use --conflict replace to overwrite (default is skipsame: skip only when same).',
                                     dest_full)
                                 sys.exit(1)
                             if decision == 'skip':
                                 restore_outcome[restore_path] = 'skipped'
                                 skip_reasons[restore_path] = skip_reason or 'unknown'
+                                if os.path.isfile(dest_full):
+                                    _append_completed_lst(completed_lst_path, restore_path, os.path.getsize(dest_full))
                                 if verbose:
                                     logging.info('Skipping existing "%s"', dest_full)
                                 processed += 1
@@ -1105,10 +1274,19 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                                     sys.exit(1)
                             if member is None:
                                 restore_failed = True
+                                restore_outcome[restore_path] = 'skipped'
+                                skip_reasons[restore_path] = 'not in archive'
                                 logging.error('Archive "%s" does not contain "%s"', backup_id, path_in_archive)
-                                sys.exit(1)
+                                processed += 1
+                                if not verbose and total_files > 0:
+                                    pct = 100 * processed // total_files
+                                    sys.stderr.write(
+                                        '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
+                                    sys.stderr.flush()
+                                continue
                             tar.extract(member, restore_base)
                             restore_outcome[restore_path] = 'restored'
+                            _append_completed_lst(completed_lst_path, restore_path, os.path.getsize(dest_full))
                             if verbose:
                                 logging.info('Extracted "%s" to "%s"', path_in_archive, dest_full)
                             processed += 1
@@ -1138,13 +1316,20 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
         if restore_temp_dir and os.path.isdir(restore_temp_dir):
             try:
                 for entry in os.listdir(restore_temp_dir):
+                    if entry == 'completed.lst':
+                        continue
                     p = os.path.join(restore_temp_dir, entry)
                     if os.path.isfile(p):
                         try:
                             os.unlink(p)
                         except OSError:
                             pass
-                os.rmdir(restore_temp_dir)
+                # Only remove directory if empty (leave .restore/completed.lst for resume)
+                try:
+                    if not os.listdir(restore_temp_dir):
+                        os.rmdir(restore_temp_dir)
+                except OSError:
+                    pass
             except OSError:
                 pass
         write_restore_report(
@@ -1233,11 +1418,11 @@ parser.add_argument(
     help='With a directory of backups and --restore: restore all backups in order (merged state)')
 parser.add_argument(
     '--conflict',
-    choices=['replace', 'skipall', 'skipsame', 'abort'],
-    default='skipall',
+    choices=['replace', 'skipsame', 'abort'],
+    default='skipsame',
     metavar='MODE',
-    help='When destination file exists: replace (overwrite), skipall (skip, default), '
-    'skipsame (skip if same hash, abort if different), abort (abort restore)')
+    help='When destination file exists: skipsame (skip if same hash, abort if different, default), '
+    'replace (overwrite), abort (abort restore)')
 parser.add_argument(
     '--validate',
     action='store_true',
@@ -1706,6 +1891,11 @@ try:
         restore_outcome_single = {}
         skip_reasons_single = {}
         restore_failed_single = False
+        # Moved entries: only noted, not extracted (not in single archive)
+        for newpath in manifest.get('moved', {}):
+            newpath = _norm_path(newpath)
+            restore_outcome_single[newpath] = 'skipped'
+            skip_reasons_single[newpath] = 'moved (informational only; not in single archive)'
 
     # Now, print the files we're changing or creating
     filecount = 0
@@ -1727,14 +1917,16 @@ try:
         with tar:
             item = tar.next()
             while item is not None:
-                if '/' + item.name not in manifest['modified']:
+                manifest_key = '/' + item.name
+                if manifest_key not in manifest['modified'] and manifest_key not in manifest.get('moved', {}):
                     logging.error(
                         'Archive contains "%s", not listed in the manifest',
                         item.name)
                     fileerror += 1
-                else:
-                    manifest['modified']['/' + item.name]['found'] = True
+                elif manifest_key in manifest['modified']:
+                    manifest['modified'][manifest_key]['found'] = True
                     filecount -= 1
+                # moved entries: do not treat as unlisted; nothing to extract
                 item = tar.next()
         sys.stderr.write('\n')
         sys.stderr.flush()
@@ -1743,16 +1935,12 @@ try:
         for k in manifest['modified']:
             if 'found' not in manifest['modified'][k]:
                 logging.error('Archive is missing "%s"', k)
-                fileerror += 1
+                restore_outcome_single[k] = 'skipped'
+                skip_reasons_single[k] = 'not in archive'
+                restore_failed_single = True
 
-        if fileerror != 0 or filecount != 0:
+        if fileerror != 0:
             restore_failed_single = True
-            write_restore_report(
-                restore_base, archive_names_single, merged_single, deleted_list_single,
-                moved_info_single, restore_outcome_single, failed=True,
-                skip_reasons=skip_reasons_single, invocation=' '.join(sys.argv))
-            logging.error("Archive contains errors, aborting")
-            sys.exit(1)
 
     # Step 1: Remove any files that were deleted
     for f in manifest['deleted']:
@@ -1771,7 +1959,7 @@ try:
         dst = os.path.normpath(restore_base + k)
         if cmdline.list:
             logging.info('Manifest: Moving "%s" to "%s"', src, dst)
-        if cmdline.restore:
+        if cmdline.restore and os.path.exists(src):
             try:
                 os.rename(src, dst)
             except OSError as e:
@@ -1786,6 +1974,51 @@ try:
     verbose = getattr(cmdline, 'verbose', False)
     total_files = len(manifest.get('modified', {}))
     processed = 0
+
+    # Resumable restore: apply completed.lst (size match -> skip; mismatch -> remove file for re-restore)
+    completed_lst_path = _completed_lst_path(restore_base, cmdline)
+    verified_single = _apply_completed_lst(
+        restore_base, completed_lst_path, merged_single.keys(),
+        restore_outcome_single, skip_reasons_single)
+    pre_skipped_paths_single = set(verified_single)
+
+    # Preemptive skip: check destination before opening tar (same logic as multi-archive)
+    if conflict_mode == 'skipsame':
+        modified_list = list(manifest.get('modified', {}).items())
+        total_to_check = len(modified_list)
+        sys.stderr.write('Locating already restored files\n')
+        sys.stderr.flush()
+        for idx, (path, meta) in enumerate(modified_list, 1):
+            path = _norm_path(path)
+            dest_full = os.path.normpath(restore_base + path)
+            checksum = meta.get('checksum', '')
+            pct_overall = 100 * idx // total_to_check if total_to_check else 0
+            if not os.path.isfile(dest_full):
+                sys.stderr.write(
+                    '\rChecking file %d of %d (%d%%): not present.    '
+                    % (idx, total_to_check, pct_overall))
+                sys.stderr.flush()
+            else:
+                def _hash_progress(bytes_done, total):
+                    pct_file = 100 * bytes_done // total if total else 0
+                    sys.stderr.write(
+                        '\rChecking file %d of %d (%d%%): Calculating, %d%% done.    '
+                        % (idx, total_to_check, pct_overall, pct_file))
+                    sys.stderr.flush()
+                if _dest_has_same_checksum(dest_full, checksum, progress_callback=_hash_progress):
+                    pre_skipped_paths_single.add(path)
+                    restore_outcome_single[path] = 'skipped'
+                    skip_reasons_single[path] = 'already existed, same content (--conflict skipsame)'
+                    _append_completed_lst(completed_lst_path, path, os.path.getsize(dest_full))
+        if modified_list:
+            sys.stderr.write('\n')
+            sys.stderr.flush()
+            n_found = len(pre_skipped_paths_single)
+            pct_found = 100 * n_found // total_to_check if total_to_check else 0
+            sys.stderr.write('Found %d of %d (%d%%). %d to restore.\n' % (
+                n_found, total_to_check, pct_found, total_to_check - n_found))
+            sys.stderr.flush()
+
     try:
         try:
             tar = open_tar_with_progress(archive, archive_size, progress_interval=5)
@@ -1794,6 +2027,15 @@ try:
                 while item is not None:
                     target_path = os.path.normpath(restore_base + '/' + item.name)
                     manifest_key = '/' + item.name
+                    if manifest_key in pre_skipped_paths_single:
+                        processed += 1
+                        if not verbose and total_files > 0:
+                            pct = 100 * processed // total_files
+                            sys.stderr.write(
+                                '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
+                            sys.stderr.flush()
+                        item = tar.next()
+                        continue
                     checksum = ''
                     if manifest_key in manifest.get('modified', {}):
                         checksum = manifest['modified'][manifest_key].get('checksum', '')
@@ -1801,13 +2043,15 @@ try:
                     if decision == 'abort':
                         restore_failed_single = True
                         logging.error(
-                            'Conflict at "%s" (file exists). Use --conflict replace to overwrite or '
-                            '--conflict skipsame to skip only when content matches.',
+                            'Conflict at "%s" (file exists, content differs). '
+                            'Use --conflict replace to overwrite (default is skipsame: skip only when same).',
                             target_path)
                         sys.exit(1)
                     if decision == 'skip':
                         restore_outcome_single[manifest_key] = 'skipped'
                         skip_reasons_single[manifest_key] = skip_reason or 'unknown'
+                        if os.path.isfile(target_path):
+                            _append_completed_lst(completed_lst_path, manifest_key, os.path.getsize(target_path))
                         if verbose:
                             logging.info('Skipping existing "%s"', target_path)
                         processed += 1
@@ -1833,6 +2077,7 @@ try:
                             os.path.dirname(target_path))
                     tar.extract(item, cmdline.restore)
                     restore_outcome_single[manifest_key] = 'restored'
+                    _append_completed_lst(completed_lst_path, manifest_key, os.path.getsize(target_path))
                     processed += 1
                     if not verbose and total_files > 0:
                         pct = 100 * processed // total_files
