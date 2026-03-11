@@ -361,6 +361,9 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None,
             if progress_thread is not None and stop_progress is not None:
                 stop_progress.set()
                 progress_thread.join()
+                if current.endswith('.sig') or current.endswith('.asc'):
+                    sys.stderr.write('\n')
+                    sys.stderr.flush()
         if result is None:
             logging.error('Unable to decrypt (unknown reason): %s', current)
             return (None, 'unknown reason')
@@ -973,8 +976,16 @@ def _apply_completed_lst(restore_base, completed_lst_path, merged_paths, restore
     """
     merged_set = set(merged_paths)
     loaded = _load_completed_lst(completed_lst_path)
+    total_loaded = len(loaded)
+    if total_loaded > 0:
+        sys.stderr.write('Applying completed.lst (resume check)\n')
+        sys.stderr.flush()
     verified = set()
-    for path, expected_size in loaded.items():
+    for idx, (path, expected_size) in enumerate(loaded.items(), 1):
+        if total_loaded > 0:
+            pct = 100 * idx // total_loaded
+            sys.stderr.write('\rChecking completed entry %d of %d (%d%%)    ' % (idx, total_loaded, pct))
+            sys.stderr.flush()
         if path not in merged_set:
             continue
         dest_full = os.path.normpath(restore_base + path)
@@ -993,6 +1004,10 @@ def _apply_completed_lst(restore_base, completed_lst_path, merged_paths, restore
                 os.unlink(dest_full)
             except OSError as exc:
                 logging.warning('Could not remove %s for re-restore: %s', dest_full, exc)
+    if total_loaded > 0:
+        sys.stderr.write('\n')
+        sys.stderr.write('Checked %d completed entries.\n' % total_loaded)
+        sys.stderr.flush()
     return verified
 
 
@@ -1114,6 +1129,12 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
         for idx, (restore_path, (_backup_id, _path_in_archive, checksum)) in enumerate(merged_list, 1):
             dest_full = os.path.normpath(restore_base + restore_path)
             pct_overall = 100 * idx // total_to_check if total_to_check else 0
+            if restore_path in pre_skipped_paths:
+                sys.stderr.write(
+                    '\rChecking file %d of %d (%d%%): skipped (completed).    '
+                    % (idx, total_to_check, pct_overall))
+                sys.stderr.flush()
+                continue
             if not os.path.isfile(dest_full):
                 sys.stderr.write(
                     '\rChecking file %d of %d (%d%%): not present.    '
@@ -1993,6 +2014,12 @@ try:
             dest_full = os.path.normpath(restore_base + path)
             checksum = meta.get('checksum', '')
             pct_overall = 100 * idx // total_to_check if total_to_check else 0
+            if path in pre_skipped_paths_single:
+                sys.stderr.write(
+                    '\rChecking file %d of %d (%d%%): skipped (completed).    '
+                    % (idx, total_to_check, pct_overall))
+                sys.stderr.flush()
+                continue
             if not os.path.isfile(dest_full):
                 sys.stderr.write(
                     '\rChecking file %d of %d (%d%%): not present.    '
