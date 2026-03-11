@@ -833,13 +833,14 @@ def build_moved_info_multi(manifests_by_basename, merged):
     return moved_info
 
 
-REPORT_FILENAME = 'iceshelf-restore-report.txt'
+REPORT_FILENAME_PREFIX = 'iceshelf-restore-report'
 
 
 def write_restore_report(restore_base, archive_names, merged, deleted_list, moved_info,
                          restore_outcome, failed=False, skip_reasons=None, invocation=None):
     """
-    Write iceshelf-restore-report.txt in the root of restore_base.
+    Write iceshelf-restore-report-YYYYMMDD-HHMMSS.txt in the root of restore_base.
+    The timestamp in the filename matches the Date line in the report body.
     merged: dict path -> (backup_id, path_in_archive, checksum) for all paths that were to be restored.
     deleted_list: list of (path, introduced_in, deleted_in).
     moved_info: dict path -> (original_path, reference_backup) for paths that were moved.
@@ -849,9 +850,12 @@ def write_restore_report(restore_base, archive_names, merged, deleted_list, move
     """
     if skip_reasons is None:
         skip_reasons = {}
+    report_time = time.localtime()
+    ts = time.strftime('%Y%m%d-%H%M%S', report_time)
+    report_filename = '%s-%s.txt' % (REPORT_FILENAME_PREFIX, ts)
     lines = []
     lines.append('iceshelf-restore audit report')
-    lines.append('Date: %s' % time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
+    lines.append('Date: %s' % time.strftime('%Y-%m-%d %H:%M:%S', report_time))
     lines.append('Destination: %s' % os.path.normpath(restore_base or '.'))
     if invocation:
         lines.append('Command: %s' % invocation)
@@ -883,7 +887,7 @@ def write_restore_report(restore_base, archive_names, merged, deleted_list, move
     lines.append('=== Not restored (deleted) ===')
     for path, introduced_in, deleted_in in sorted(deleted_list, key=lambda x: x[0]):
         lines.append('%s — introduced in %s, deleted in %s' % (path, introduced_in, deleted_in))
-    report_path = os.path.join(restore_base or '.', REPORT_FILENAME)
+    report_path = os.path.join(restore_base or '.', report_filename)
     try:
         with open(report_path, 'w', encoding='utf-8') as fp:
             fp.write('\n'.join(lines))
