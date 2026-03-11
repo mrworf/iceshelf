@@ -196,6 +196,14 @@ def _strip_one_suffix(basename):
     return base
 
 
+def _final_stripped_basename(basename):
+    """Return basename after all .sig/.asc/.gpg layers are stripped (e.g. archive.tar.bz2.gpg -> archive.tar.bz2)."""
+    result = basename
+    while result.endswith('.sig') or result.endswith('.asc') or result.endswith('.gpg'):
+        result = _strip_one_suffix(result)
+    return result
+
+
 def _should_verify_signature(filepath, gpg=None):
     """Return False if we should skip verification (file is encrypted); True to run verify."""
     if '.gpg.asc' in filepath or '.gpg.sig' in filepath or filepath.endswith('.gpg'):
@@ -294,17 +302,19 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None,
     while current.endswith('.sig') or current.endswith('.asc') or current.endswith('.gpg'):
         base = os.path.basename(current)
         next_basename = _strip_one_suffix(base)
-        if work_dir is not None:
+        # When caller wants output at a specific path, write the last step there directly.
+        if output_path is not None and next_basename == _final_stripped_basename(base):
+            next_path = output_path
+        elif work_dir is not None:
             next_path = os.path.join(work_dir, next_basename)
-            if os.path.exists(next_path) and _path_inside(work_dir, next_path):
-                try:
-                    os.unlink(next_path)
-                except OSError as exc:
-                    logging.warning('Could not remove temp file %s: %s', next_path, exc)
         else:
             next_path = os.path.join(source_dir, next_basename)
-            if os.path.exists(next_path):
-                os.remove(next_path)
+        # Unlink before write so GPG writes to a clean path (including when next_path is output_path).
+        if os.path.exists(next_path):
+            try:
+                os.unlink(next_path)
+            except OSError as exc:
+                logging.warning('Could not remove temp file %s: %s', next_path, exc)
 
         # When using ephemeral keyring (--key-file), pass --trust-model always so gpg
         # does not require the key to be in the trustdb for signature verification.
@@ -423,13 +433,15 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None,
         current = next_path
 
     if output_path is not None:
+        # When we wrote directly to output_path on the last step, current == output_path (no copy).
+        # Only copy when zero decryption steps (file was already plain).
         if os.path.abspath(current) != os.path.abspath(output_path):
             try:
                 shutil.copy2(current, output_path)
             except OSError as exc:
                 logging.error('Failed to write decrypted archive to %s: %s', output_path, exc)
                 return (None, str(exc))
-        if work_dir is not None and _path_inside(work_dir, current):
+        if work_dir is not None and _path_inside(work_dir, current) and os.path.abspath(current) != os.path.abspath(output_path):
             try:
                 os.unlink(current)
             except OSError as exc:
@@ -1204,12 +1216,11 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                     '  Decrypting archive for %s (may take several minutes for large files)...',
                     backup_id)
                 archive_original_size = os.path.getsize(archive_path)
-                fd, temp_path = tempfile.mkstemp(
-                    suffix='.tar.bz2', prefix='iceshelf-restore.%s.' % backup_id, dir=restore_temp_dir)
-                os.close(fd)
+                final_basename = _final_stripped_basename(os.path.basename(archive_path))
+                direct_path = os.path.join(restore_temp_dir, final_basename)
                 try:
                     stripped, strip_err = strip_file(
-                        archive_path, backup_gpg, output_path=temp_path, work_dir=restore_temp_dir,
+                        archive_path, backup_gpg, output_path=direct_path, work_dir=restore_temp_dir,
                         progress_interval=5, progress_original_size=archive_original_size)
                     if stripped is None:
                         logging.error(
@@ -1219,7 +1230,7 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                     sys.stderr.write('\n')
                     sys.stderr.flush()
                     tar = open_tar_with_progress(
-                        stripped, os.path.getsize(stripped), progress_interval=5)
+                        direct_path, os.path.getsize(direct_path), progress_interval=5)
                     with tar:
                         for restore_path, path_in_archive, checksum in by_backup[backup_id]:
                             if restore_path in pre_skipped_paths:
@@ -1320,10 +1331,10 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                     sys.stderr.flush()
                 finally:
                     try:
-                        if os.path.isfile(temp_path):
-                            os.unlink(temp_path)
+                        if os.path.isfile(direct_path):
+                            os.unlink(direct_path)
                     except OSError as exc:
-                        logging.warning('Could not remove temp decrypted archive %s: %s', temp_path, exc)
+                        logging.warning('Could not remove temp decrypted archive %s: %s', direct_path, exc)
         except Exception:
             restore_failed = True
             raise
@@ -1840,8 +1851,10 @@ try:
                 sys.exit(1)
         archive_path_full = os.path.join(basepath, file_archive)
         archive_original_size = os.path.getsize(archive_path_full)
+        final_basename = _final_stripped_basename(file_archive)
+        direct_path = os.path.join(work_dir, final_basename)
         archive, strip_err = strip_file(
-            archive_path_full, restore_gpg, work_dir=work_dir,
+            archive_path_full, restore_gpg, output_path=direct_path, work_dir=work_dir,
             progress_interval=5, progress_original_size=archive_original_size)
         if archive is None:
             logging.error(
