@@ -24,9 +24,9 @@ import sys
 import tarfile
 import tempfile
 import threading
-import gnupg
 from modules import configuration
 from modules import fileutils
+from modules import gpg as gpg_module
 
 # Established patterns from iceshelf backup output (exact filenames only).
 MANIFEST_SUFFIXES = ('.json.gpg.asc', '.json.asc', '.json.gpg', '.json')
@@ -160,11 +160,9 @@ def valid_archive(base_dir, list_file_path, corrupt_list, found_files):
     return not criticalerror
 
 
-def _is_gpg_encrypted(filepath, gpg=None):
+def _is_gpg_encrypted(filepath, keyring_dir=None):
     """Return True if the file is OpenPGP-encrypted (not just signed). Uses gpg --list-packets."""
-    env = os.environ.copy()
-    if gpg is not None and getattr(gpg, 'gnupghome', None):
-        env['GNUPGHOME'] = gpg.gnupghome
+    env = gpg_module.gpg_env(keyring_dir)
     try:
         result = subprocess.run(
             ['gpg', '--list-packets', filepath],
@@ -204,25 +202,22 @@ def _final_stripped_basename(basename):
     return result
 
 
-def _should_verify_signature(filepath, gpg=None):
+def _should_verify_signature(filepath, keyring_dir=None):
     """Return False if we should skip verification (file is encrypted); True to run verify."""
     if '.gpg.asc' in filepath or '.gpg.sig' in filepath or filepath.endswith('.gpg'):
         return False
     if filepath.endswith('.asc') or filepath.endswith('.sig'):
-        if _is_gpg_encrypted(filepath, gpg):
+        if _is_gpg_encrypted(filepath, keyring_dir):
             return False
     return True
 
 
-def validate_file(filepath, gpg=None):
+def validate_file(filepath, keyring_dir=None):
     """Verify GPG signatures when present. Skip verify for encrypted files (decrypt only)."""
-    if gpg is None:
-        gpg = gnupg.GPG()
-
     logging.debug('Validating "%s"', filepath)
 
     if filepath.endswith('.sig') or filepath.endswith('.asc'):
-        if not _should_verify_signature(filepath, gpg):
+        if not _should_verify_signature(filepath, keyring_dir):
             return True
         if config.get('skip_signature'):
             return True
@@ -231,35 +226,16 @@ def validate_file(filepath, gpg=None):
                 'Signature present but cannot validate (no public key in key file). '
                 'Rerun with --skip-signature to skip signature verification.')
             return False
-        verify_kw = {}
-        if getattr(gpg, 'gnupghome', None):
-            verify_kw['extra_args'] = ['--trust-model', 'always']
-        try:
-            with open(filepath, 'rb') as sig_file:
-                try:
-                    verification = gpg.verify_file(sig_file, **verify_kw)
-                except TypeError:
-                    verify_kw.pop('extra_args', None)
-                    sig_file.seek(0)
-                    verification = gpg.verify_file(sig_file, **verify_kw)
-        except BrokenPipeError:
+        ok, stderr = gpg_module.gpg_verify(
+            filepath, keyring_dir, skip_signature=config.get('skip_signature'))
+        if not ok:
             logging.error(
-                'gpg verification failed: broken pipe (gpg exited early). '
-                'Ensure the file is signed with a key in your keyring (e.g. from --key-file).')
+                'Signature verification failed: %s',
+                filepath)
+            if stderr:
+                logging.error('gpg: %s', stderr)
             logging.info(
                 'Run "gpg --verify %s" to see GPG\'s error; with --key-file the signer\'s key must be in that file.',
-                filepath)
-            return False
-        except OSError as exc:
-            logging.error('gpg verification failed: %s', exc)
-            return False
-        except Exception as exc:
-            logging.error('gpg verification failed: %s', exc)
-            return False
-        if not verification or not verification.valid:
-            logging.error(
-                'Signature verification failed (%s): %s',
-                getattr(verification, 'status', 'unknown'),
                 filepath)
             return False
     return True
@@ -281,7 +257,7 @@ def _gpg_failure_reason(stderr_text):
     return None
 
 
-def strip_file(filename, gpg=None, output_path=None, work_dir=None,
+def strip_file(filename, keyring_dir=None, output_path=None, work_dir=None,
               progress_interval=0, progress_original_size=None):
     """Strip signatures and decrypt files as needed.
     If output_path is given, the final stripped/decrypted file is written there.
@@ -291,40 +267,36 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None,
     progress_interval seconds (after an initial delay of that length) during decryption.
     Returns (path, None) on success, (None, error_reason) on failure.
     """
-    if gpg is None:
-        gpg = gnupg.GPG()
-
     logging.debug('Processing "%s"', filename)
 
     current = filename
     source_dir = os.path.dirname(os.path.abspath(filename))
+    passphrase = config.get('encrypt-pw')
 
     while current.endswith('.sig') or current.endswith('.asc') or current.endswith('.gpg'):
         base = os.path.basename(current)
         next_basename = _strip_one_suffix(base)
-        # When caller wants output at a specific path, write the last step there directly.
-        if output_path is not None and next_basename == _final_stripped_basename(base):
-            next_path = output_path
-        elif work_dir is not None:
-            next_path = os.path.join(work_dir, next_basename)
+        two_layers = (base.endswith('.gpg.sig') or base.endswith('.gpg.asc'))
+        if two_layers:
+            final_basename = _final_stripped_basename(base)
+            if output_path is not None and final_basename == os.path.basename(output_path):
+                next_path = output_path
+            elif work_dir is not None:
+                next_path = os.path.join(work_dir, final_basename)
+            else:
+                next_path = os.path.join(source_dir, final_basename)
         else:
-            next_path = os.path.join(source_dir, next_basename)
-        # Unlink before write so GPG writes to a clean path (including when next_path is output_path).
+            if output_path is not None and next_basename == _final_stripped_basename(base):
+                next_path = output_path
+            elif work_dir is not None:
+                next_path = os.path.join(work_dir, next_basename)
+            else:
+                next_path = os.path.join(source_dir, next_basename)
         if os.path.exists(next_path):
             try:
                 os.unlink(next_path)
             except OSError as exc:
                 logging.warning('Could not remove temp file %s: %s', next_path, exc)
-
-        # When using ephemeral keyring (--key-file), pass --trust-model always so gpg
-        # does not require the key to be in the trustdb for signature verification.
-        decrypt_kw = {
-            'always_trust': True,
-            'passphrase': config.get('encrypt-pw'),
-            'output': next_path,
-        }
-        if getattr(gpg, 'gnupghome', None):
-            decrypt_kw['extra_args'] = ['--trust-model', 'always']
 
         progress_thread = None
         stop_progress = None
@@ -350,20 +322,12 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None,
             progress_thread.start()
 
         try:
-            with open(current, 'rb') as src_fh:
-                try:
-                    result = gpg.decrypt_file(src_fh, **decrypt_kw)
-                except TypeError:
-                    # Library may not support extra_args; retry without it (good_sig_untrusted handles outcome)
-                    decrypt_kw_retry = {k: v for k, v in decrypt_kw.items() if k != 'extra_args'}
-                    src_fh.seek(0)
-                    result = gpg.decrypt_file(src_fh, **decrypt_kw_retry)
-        except BrokenPipeError:
-            reason = (
-                'Broken pipe (gpg exited early). '
-                'Check passphrase and that the file is encrypted for a key in your keyring.')
-            logging.error('Unable to decrypt "%s": %s', current, reason)
-            return (None, reason)
+            if two_layers:
+                ok, msg = gpg_module.gpg_decrypt_piped(
+                    current, next_path, keyring_dir, passphrase)
+            else:
+                ok, msg = gpg_module.gpg_decrypt_one(
+                    current, next_path, keyring_dir, passphrase)
         except OSError as exc:
             logging.error('Unable to decrypt "%s": %s', current, exc)
             return (None, str(exc))
@@ -374,17 +338,10 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None,
                 if current.endswith('.sig') or current.endswith('.asc'):
                     sys.stderr.write('\n')
                     sys.stderr.flush()
-        if result is None:
-            logging.error('Unable to decrypt (unknown reason): %s', current)
-            return (None, 'unknown reason')
-        if not getattr(result, 'ok', True):
-            # Prefer stderr (full GPG output); status is a brief summary and can be misleading
-            stderr = (getattr(result, 'stderr', '') or '').strip()
-            status = (getattr(result, 'status', '') or '').strip()
-            msg = stderr or status or 'gpg failed'
+
+        if not ok:
             summary = _gpg_failure_reason(msg) or 'GPG verification or decryption failed'
             signature_related = 'signature' in msg.lower()
-            # Decryption can succeed (file written) but gpg reports "untrusted key" and ok=False
             good_sig_untrusted = (
                 signature_related
                 and 'good signature' in msg.lower()
@@ -394,7 +351,6 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None,
             skip_ok = (
                 signature_related
                 and config.get('skip_signature')
-                and getattr(result, 'returncode', None) == 0
                 and os.path.exists(next_path))
             if good_sig_untrusted:
                 logging.debug(
@@ -417,13 +373,9 @@ def strip_file(filename, gpg=None, output_path=None, work_dir=None,
                         pass
                 return (None, summary)
         if not os.path.exists(next_path):
-            status = getattr(result, 'status', 'unknown')
-            logging.error(
-                'Unable to decrypt (%s): %s',
-                status, current)
-            return (None, status)
+            logging.error('Unable to decrypt: %s', current)
+            return (None, msg or 'unknown reason')
 
-        # Remove previous stage only if it was in work_dir (never touch source)
         if work_dir is not None and _path_inside(work_dir, current):
             try:
                 os.unlink(current)
@@ -726,7 +678,7 @@ def _parent_backup(manifest):
     return manifest.get('lastbackup') or manifest.get('previousbackup')
 
 
-def get_chain_gaps(basepath, all_basenames, restore_gpg, config):
+def get_chain_gaps(basepath, all_basenames, keyring_dir, config):
     """
     Load each backup's manifest and return set of parent backup ids that are not in all_basenames.
     Used when listing multiple backups to warn about missing backups in the chain.
@@ -738,9 +690,9 @@ def get_chain_gaps(basepath, all_basenames, restore_gpg, config):
             manifest_path = get_manifest_file(basepath, basename)
             if not manifest_path:
                 continue
-            if not validate_file(manifest_path, restore_gpg):
+            if not validate_file(manifest_path, keyring_dir):
                 continue
-            stripped, _ = strip_file(manifest_path, restore_gpg, work_dir=work_dir)
+            stripped, _ = strip_file(manifest_path, keyring_dir, work_dir=work_dir)
             if stripped is None:
                 continue
             try:
@@ -1040,11 +992,8 @@ def _append_completed_lst(completed_lst_path, restore_path, size):
         logging.warning('Could not append to completed.lst: %s', exc)
 
 
-def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg, config, cmdline, keyring_dir=None):
+def run_multi_archive_restore(basepath, all_basenames, restore_base, config, cmdline, keyring_dir=None):
     """Restore all backups in order to restore_base, merging state and applying conflict policy."""
-    # 1) Load manifests: for each backup validate+strip manifest, load manifest (no archive decryption yet)
-    # Use a fresh GPG instance per backup to avoid pipe/state reuse bugs (e.g. BrokenPipeError
-    # when the same instance is used for multiple verify_file/decrypt_file calls).
     n_backups = len(all_basenames)
     logging.info('Multi-archive restore: processing %d backup(s)', n_backups)
     manifests_by_basename = {}
@@ -1052,7 +1001,6 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
     restore_temp_dir = None  # set when we need to decrypt manifest or archive
     for idx, basename in enumerate(all_basenames, 1):
         logging.info('Loading backup %d/%d: %s', idx, n_backups, basename)
-        backup_gpg = gnupg.GPG(gnupghome=keyring_dir) if keyring_dir else gnupg.GPG()
         manifest_path = get_manifest_file(basepath, basename)
         archive_path = get_archive_file(basepath, basename)
         if not manifest_path or not archive_path:
@@ -1061,7 +1009,7 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
         file_manifest = os.path.basename(manifest_path)
         file_archive = os.path.basename(archive_path)
         detect_leftovers(basepath, basename, manifest_path, archive_path, None)
-        if not validate_file(manifest_path, backup_gpg):
+        if not validate_file(manifest_path, keyring_dir):
             logging.error(
                 'Manifest validation failed for "%s". '
                 'Ensure all backups are signed with a key in your keyring (e.g. from --key-file).',
@@ -1075,7 +1023,7 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                 logging.error('Cannot create restore temp dir "%s": %s', restore_temp_dir, exc)
                 sys.exit(1)
         logging.info('  Decrypting manifest for %s...', basename)
-        stripped_manifest, strip_err = strip_file(manifest_path, backup_gpg, work_dir=restore_temp_dir)
+        stripped_manifest, strip_err = strip_file(manifest_path, keyring_dir, work_dir=restore_temp_dir)
         if stripped_manifest is None:
             logging.error(
                 'Unable to process manifest for "%s": %s',
@@ -1204,8 +1152,7 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                 if not archive_path:
                     logging.error('Archive not found for "%s"', backup_id)
                     sys.exit(1)
-                backup_gpg = gnupg.GPG(gnupghome=keyring_dir) if keyring_dir else gnupg.GPG()
-                if not validate_file(archive_path, backup_gpg):
+                if not validate_file(archive_path, keyring_dir):
                     restore_failed = True
                     logging.error(
                         'Archive validation failed for "%s". '
@@ -1220,7 +1167,7 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, restore_gpg
                 direct_path = os.path.join(restore_temp_dir, final_basename)
                 try:
                     stripped, strip_err = strip_file(
-                        archive_path, backup_gpg, output_path=direct_path, work_dir=restore_temp_dir,
+                        archive_path, keyring_dir, output_path=direct_path, work_dir=restore_temp_dir,
                         progress_interval=5, progress_original_size=archive_original_size)
                     if stripped is None:
                         logging.error(
@@ -1549,17 +1496,17 @@ else:
         stream=sys.stdout,
         level=LOG_LEVEL,
         format=LOG_FORMAT)
-logging.getLogger("gnupg").setLevel(logging.WARNING)
 logging.getLogger("shutil").setLevel(logging.WARNING)
 
 logging.info('Starting iceshelf-restore in %s mode', ', '.join(mode) or 'validate')
 
-# Make sure we have the correct gnupg module
-if "encrypt_file" not in dir(gnupg.GPG()):
-    logging.error(
-        "Current GnuPG python module does not support file encryption, "
-        "please check FAQ section in documentation")
-    sys.exit(255)
+# Require gpg binary; skip check when user only requests help so help is always shown
+if '--help' not in sys.argv and '-h' not in sys.argv:
+    if not gpg_module.gpg_available():
+        logging.error(
+            'gpg is not installed or not on PATH; '
+            'iceshelf-restore requires gpg to verify and decrypt backups.')
+        sys.exit(255)
 
 #######################
 
@@ -1581,10 +1528,9 @@ if getattr(cmdline, 'skip_signature', False):
     config['skip_signature'] = True
 
 # Optional ephemeral keyring when using --key-file (no key left on disk)
-# Use GNUPGHOME so the gpg binary uses our temp dir (works with both gnupg and python-gnupg)
-restore_gpg = None
 temp_keyring_dir = None
 old_gnupghome = None
+keyring_dir = None
 if cmdline.key_file:
     key_path = os.path.abspath(cmdline.key_file)
     if not os.path.isfile(key_path):
@@ -1600,14 +1546,14 @@ if cmdline.key_file:
     os.chmod(temp_keyring_dir, 0o700)
     old_gnupghome = os.environ.get('GNUPGHOME')
     os.environ['GNUPGHOME'] = temp_keyring_dir
-    restore_gpg = gnupg.GPG(gnupghome=temp_keyring_dir)
+    keyring_dir = temp_keyring_dir
     with open(key_path, 'rb') as f:
         key_data = f.read()
-    import_result = restore_gpg.import_keys(key_data)
-    if not import_result or getattr(import_result, 'count', 0) == 0:
+    ok, err = gpg_module.gpg_import_and_trust(temp_keyring_dir, key_data)
+    if not ok:
         logging.error(
-            'No key could be imported from "%s". Check that the file is a valid GPG key.',
-            key_path)
+            'No key could be imported from "%s". Check that the file is a valid GPG key. %s',
+            key_path, err or '')
         secure_wipe_temp_dir(temp_keyring_dir)
         sys.exit(1)
     logging.debug('Imported key(s) from %s into ephemeral keyring', key_path)
@@ -1622,62 +1568,6 @@ if cmdline.key_file:
     if not has_private:
         logging.warning(
             'Cannot decrypt encrypted files, no private key provided in %s.', key_path)
-
-    # Set ultimate trust on imported keys so GPG can verify signatures (not just decrypt).
-    def _keyring_fingerprints(keyring_dir):
-        """Get primary key fingerprints from keyring via gpg --list-keys --with-colons."""
-        try:
-            result = subprocess.run(
-                ['gpg', '--no-tty', '--batch', '--list-keys', '--with-colons'],
-                env=dict(os.environ, GNUPGHOME=keyring_dir),
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode != 0:
-                return []
-            fingerprints = []
-            want_next_fpr = False
-            for line in (result.stdout or '').splitlines():
-                # Only fpr immediately after pub: or sec: (primary key), not after sub:
-                if line.startswith('pub:') or line.startswith('sec:'):
-                    want_next_fpr = True
-                    continue
-                if line.startswith('fpr:'):
-                    if want_next_fpr:
-                        parts = line.split(':')
-                        if len(parts) >= 10 and parts[9]:
-                            fingerprints.append(parts[9])
-                    want_next_fpr = False
-            return fingerprints
-        except (OSError, subprocess.TimeoutExpired):
-            return []
-
-    fingerprints = getattr(import_result, 'fingerprints', None) or []
-    if not fingerprints:
-        fingerprints = _keyring_fingerprints(temp_keyring_dir)
-    if fingerprints:
-        if hasattr(restore_gpg, 'trust_keys'):
-            for fpr in fingerprints:
-                if fpr:
-                    try:
-                        restore_gpg.trust_keys(fpr, 'TRUST_ULTIMATE')
-                    except (AttributeError, TypeError, ValueError):
-                        pass
-        # Always run --import-ownertrust: trust_keys may not exist or may not affect gpg binary.
-        try:
-            ownertrust = ''.join('%s:6:\n' % f for f in fingerprints if f)
-            if ownertrust:
-                subprocess.run(
-                    ['gpg', '--no-tty', '--batch', '--import-ownertrust'],
-                    input=ownertrust.encode(),
-                    env=dict(os.environ, GNUPGHOME=temp_keyring_dir),
-                    capture_output=True,
-                    timeout=10,
-                    check=False,
-                )
-        except (OSError, subprocess.TimeoutExpired):
-            pass
 
     def _sig_wipe_keyring(signum, frame):
         secure_wipe_temp_dir(temp_keyring_dir)
@@ -1704,8 +1594,8 @@ try:
     if all_basenames is not None and len(all_basenames) > 1:
         if cmdline.all and cmdline.restore:
             run_multi_archive_restore(
-                basepath, all_basenames, restore_base, restore_gpg, config, cmdline,
-                keyring_dir=temp_keyring_dir if cmdline.key_file else None)
+                basepath, all_basenames, restore_base, config, cmdline,
+                keyring_dir=keyring_dir)
             sys.exit(0)
         if cmdline.all and not cmdline.restore:
             logging.error('--all requires --restore and a directory containing multiple backups')
@@ -1717,7 +1607,7 @@ try:
             len(all_basenames))
         if cmdline.list:
             logging.info('--list only works for a single backup; specify a backup prefix to list contents.')
-        missing = get_chain_gaps(basepath, all_basenames, restore_gpg, config)
+        missing = get_chain_gaps(basepath, all_basenames, keyring_dir, config)
         if missing:
             logging.warning(
                 'Backup(s) not found in folder: %s. Restored set may be incomplete.',
@@ -1785,11 +1675,11 @@ try:
     found_files = []
     if filelist_path:
         list_basename = os.path.basename(filelist_path)
-        if not validate_file(filelist_path, restore_gpg):
+        if not validate_file(filelist_path, keyring_dir):
             logging.warning('Skipping filelist "%s" due to failed validation', list_basename)
             filelist_path = None
         elif cmdline.list or cmdline.restore or cmdline.validate:
-            stripped_list, strip_err = strip_file(filelist_path, restore_gpg, work_dir=work_dir)
+            stripped_list, strip_err = strip_file(filelist_path, keyring_dir, work_dir=work_dir)
             if stripped_list is None:
                 logging.warning(
                     'Unable to process filelist "%s": %s',
@@ -1810,12 +1700,12 @@ try:
     logging.info('Validating metadata files')
     do_manifest = cmdline.list or cmdline.restore or cmdline.validate
 
-    if not validate_file(file_manifest_path, restore_gpg):
+    if not validate_file(file_manifest_path, keyring_dir):
         logging.error('Manifest validation failed. Ensure it is signed with a key in your keyring.')
         if not cmdline.force:
             sys.exit(1)
     if do_manifest:
-        stripped_manifest, strip_err = strip_file(file_manifest_path, restore_gpg, work_dir=work_dir)
+        stripped_manifest, strip_err = strip_file(file_manifest_path, keyring_dir, work_dir=work_dir)
     else:
         stripped_manifest, strip_err = None, None
     if do_manifest and stripped_manifest is None:
@@ -1845,7 +1735,7 @@ try:
     if cmdline.restore:
         logging.info('Preparing to restore files to "%s"', cmdline.restore)
         logging.info('Validating archive file "%s"', file_archive)
-        if not validate_file(os.path.join(basepath, file_archive), restore_gpg):
+        if not validate_file(os.path.join(basepath, file_archive), keyring_dir):
             logging.error('File "%s" signature does not match', file_archive)
             if not cmdline.force:
                 sys.exit(1)
@@ -1854,7 +1744,7 @@ try:
         final_basename = _final_stripped_basename(file_archive)
         direct_path = os.path.join(work_dir, final_basename)
         archive, strip_err = strip_file(
-            archive_path_full, restore_gpg, output_path=direct_path, work_dir=work_dir,
+            archive_path_full, keyring_dir, output_path=direct_path, work_dir=work_dir,
             progress_interval=5, progress_original_size=archive_original_size)
         if archive is None:
             logging.error(

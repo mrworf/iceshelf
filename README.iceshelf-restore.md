@@ -2,6 +2,10 @@
 
 A helper tool for iceshelf, allowing a somewhat easier way of restoring backups created by it.
 
+# Requirements
+
+iceshelf-restore requires the **gpg** binary (GnuPG command-line tool) to be installed and on your PATH for signature verification and decryption. It does not use the python-gnupg library; all GPG operations are performed via the system `gpg` command. If gpg is not available, the tool will exit with an error at startup (help is still shown when you pass `--help`).
+
 # Features
 
 - Quick validation of backup
