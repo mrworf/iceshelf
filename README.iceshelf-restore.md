@@ -46,6 +46,8 @@ Add `--restore` with a folder where you want the backup restored. The tool will 
 
 **Conflict handling (`--conflict`):** Before writing any file, the tool checks if the destination path already exists. Default is to skip existing files (`skipall`). You can set `--conflict replace` to always overwrite, `--conflict skipsame` to skip only when the existing file has the same contents (by checksum) and abort when it differs, or `--conflict abort` to abort the restore on the first existing path.
 
+**Unexpected files in destination (`--show-extras`):** Use `--show-extras` to have the audit report include a section listing all files present in the restoration folder that were not part of the backup. This helps you spot leftovers or stray files. The list is written only to the report file, not to the command line.
+
 Note! Once the restore process has started, a failure to remove or rename/move an existing file will only cause a warning, restore will still continue.
 
 ## Corrupt backup

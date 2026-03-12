@@ -838,8 +838,41 @@ def build_moved_info_multi(manifests_by_basename, merged):
 REPORT_FILENAME_PREFIX = 'iceshelf-restore-report'
 
 
+def collect_extra_paths(restore_base, merged_paths_set, restore_temp_dir, report_filename_prefix):
+    """
+    Walk the restore destination and return paths of files that exist on disk
+    but are not in the backup (merged_paths_set). Paths are in the same
+    normalized form as merged keys (leading slash, forward slashes).
+    Excludes files under restore_temp_dir and audit report files.
+    """
+    if not restore_base or not os.path.isdir(restore_base):
+        return []
+    base_norm = os.path.normpath(restore_base)
+    temp_norm = os.path.normpath(restore_temp_dir)
+    extras = []
+    try:
+        for dirpath, _dirnames, filenames in os.walk(base_norm):
+            for name in filenames:
+                fullpath = os.path.join(dirpath, name)
+                if _path_inside(temp_norm, fullpath):
+                    continue
+                if dirpath == base_norm and name.startswith(report_filename_prefix) and name.endswith('.txt'):
+                    continue
+                try:
+                    rel = os.path.relpath(fullpath, base_norm)
+                except ValueError:
+                    continue
+                path = '/' + rel.replace(os.sep, '/')
+                if path not in merged_paths_set:
+                    extras.append(path)
+    except OSError:
+        return []
+    return sorted(extras)
+
+
 def write_restore_report(restore_base, archive_names, merged, deleted_list, moved_info,
-                         restore_outcome, failed=False, skip_reasons=None, invocation=None):
+                         restore_outcome, failed=False, skip_reasons=None, invocation=None,
+                         show_extras=False, extra_paths=None):
     """
     Write iceshelf-restore-report-YYYYMMDD-HHMMSS.txt in the root of restore_base.
     The timestamp in the filename matches the Date line in the report body.
@@ -849,9 +882,13 @@ def write_restore_report(restore_base, archive_names, merged, deleted_list, move
     restore_outcome: dict path -> 'restored' | 'skipped' (only 'restored' appear in Restored section).
     skip_reasons: dict path -> reason string for paths that were skipped (conflict resolution).
     invocation: command line string to record how the tool was invoked.
+    show_extras: if True and extra_paths non-empty, add a section listing unexpected files.
+    extra_paths: list of paths (normalized) that exist in restore destination but were not in the backup.
     """
     if skip_reasons is None:
         skip_reasons = {}
+    if extra_paths is None:
+        extra_paths = []
     report_time = time.localtime()
     ts = time.strftime('%Y%m%d-%H%M%S', report_time)
     report_filename = '%s-%s.txt' % (REPORT_FILENAME_PREFIX, ts)
@@ -889,6 +926,14 @@ def write_restore_report(restore_base, archive_names, merged, deleted_list, move
     lines.append('=== Not restored (deleted) ===')
     for path, introduced_in, deleted_in in sorted(deleted_list, key=lambda x: x[0]):
         lines.append('%s — introduced in %s, deleted in %s' % (path, introduced_in, deleted_in))
+    if show_extras and extra_paths:
+        dest_label = os.path.normpath(restore_base or '.')
+        lines.append('')
+        lines.append('=== Unexpected files in restoration folder %s ===' % dest_label)
+        for path in extra_paths:
+            lines.append(path)
+    lines.append('')
+    lines.append('End of Report')
     report_path = os.path.join(restore_base or '.', report_filename)
     try:
         with open(report_path, 'w', encoding='utf-8') as fp:
@@ -1354,10 +1399,16 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, config, cmd
                     pass
             except OSError:
                 pass
+        extra_paths = []
+        if getattr(cmdline, 'show_extras', False):
+            extra_paths = collect_extra_paths(
+                restore_base, set(merged.keys()),
+                _restore_temp_dir(restore_base, cmdline), REPORT_FILENAME_PREFIX)
         write_restore_report(
             restore_base, archive_names, merged, deleted_list, moved_info,
             restore_outcome, failed=restore_failed, skip_reasons=skip_reasons,
-            invocation=' '.join(sys.argv))
+            invocation=' '.join(sys.argv),
+            show_extras=getattr(cmdline, 'show_extras', False), extra_paths=extra_paths)
 
     if not verbose and total_files > 0:
         sys.stderr.write('\n')
@@ -1445,6 +1496,11 @@ parser.add_argument(
     metavar='MODE',
     help='When destination file exists: skipsame (skip if same hash, abort if different, default), '
     'replace (overwrite), abort (abort restore)')
+parser.add_argument(
+    '--show-extras',
+    action='store_true',
+    default=False,
+    help='Include in the audit report a section listing files in the restoration folder that were not part of the backup')
 parser.add_argument(
     '--validate',
     action='store_true',
@@ -2067,10 +2123,16 @@ try:
             raise
     finally:
         if cmdline.restore:
+            extra_paths_single = []
+            if getattr(cmdline, 'show_extras', False):
+                extra_paths_single = collect_extra_paths(
+                    restore_base, set(merged_single.keys()),
+                    _restore_temp_dir(restore_base, cmdline), REPORT_FILENAME_PREFIX)
             write_restore_report(
                 restore_base, archive_names_single, merged_single, deleted_list_single,
                 moved_info_single, restore_outcome_single, failed=restore_failed_single,
-                skip_reasons=skip_reasons_single, invocation=' '.join(sys.argv))
+                skip_reasons=skip_reasons_single, invocation=' '.join(sys.argv),
+                show_extras=getattr(cmdline, 'show_extras', False), extra_paths=extra_paths_single)
     if not verbose and total_files > 0:
         sys.stderr.write('\n')
         sys.stderr.flush()
