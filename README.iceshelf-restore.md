@@ -1,6 +1,6 @@
 # iceshelf-restore
 
-A helper tool for iceshelf, allowing a somewhat easier way of restoring backups created by it.
+Restores and validates backups created by iceshelf.
 
 # Requirements
 
@@ -9,22 +9,24 @@ iceshelf-restore requires the **gpg** binary (GnuPG command-line tool) to be ins
 # Features
 
 - Quick validation of backup
-- Able to check for parent backup to avoid extacting in the wrong order (`--lastbackup`)
+- Able to check for parent backup to avoid extracting in the wrong order (`--lastbackup`)
 - Can show contents of backup (`--list`)
 - Validate or restore a backup without needing the original config file
 - Allows for restore even when some files are missing (`--force`)
-- Initial validation of files using `filelist.txt` if available (will still confirm signatures)
+- Initial validation of files using a filelist (`.lst`/`.lst.asc` or legacy `filelist.txt`) if available (will still confirm signatures)
 - Can attempt parity repair using `--repair`
 - Use a key from a file with `--key-file` (key is not written to your keyring)
 - Multi-archive restore: when a folder contains multiple backups, list them or restore all in order with `--all`
-- Conflict handling when a file already exists at the destination (`--conflict`)
+- Conflict handling when a file already exists at the destination (`--conflict`; default: skip if same content, abort if different)
+- Resumable restore: progress is recorded in `.restore/completed.lst`; re-run to skip already-extracted files (single- and multi-archive)
+- Audit report written on every restore: `iceshelf-restore-report-YYYYMMDD-HHMMSS.txt` in the restore destination
 
 # Usage
 
 The tool accepts either a single file from the backup or just the prefix of the backup files. Configuration is optional, but can be provided using `--config` if you have it available. Without it you may supply the GPG user using `--user` and the passphrase using `--passphrase`. To use a key from a file instead of your keyring, use `--key-file`.
 Running the command with no extra arguments will validate the backup and return `0` on success.
 
-Note! If the archive is corrupt, it will only tell you if there is the possibility to repair it. It is *NO GUARANTEE* that you actually can.
+If the archive is corrupt, the tool only indicates whether repair may be possible; it does not guarantee that repair will succeed.
 
 ## Using a key from a file
 
@@ -36,19 +38,23 @@ Adding `--list` will print the contents of the backup as specified by the manife
 
 ## Validating the backup
 
-`--validate` performs a full validation of the backup without extracting any files. Combine with `--repair` to fix corrupted archives if parity files are available.
+`--validate` performs a full validation of the backup without extracting any files. Combine with `--repair` to fix corrupted archives if parity files are available. If the backup folder contains less-wrapped versions of the chosen files (e.g. leftover `.json` from a prior run), the tool logs a warning and continues using the chosen file (e.g. `.json.gpg`).
 
 ## Restoring the backup
 
-Add `--restore` with a folder where you want the backup restored. The tool will automatically locate the necessary files based on the provided prefix or file path. Extra verification is performed to ensure the archive matches the manifest. If a file is present in the archive but not in the manifest, it will error out. This is by design to avoid causing unexpected issues after restoring.
+Add `--restore` with a folder where you want the backup restored. The tool will automatically locate the necessary files based on the provided prefix or file path. Extra verification is performed to ensure the archive matches the manifest. If a file is present in the archive but not in the manifest, it will error out. This is by design to avoid causing unexpected issues after restoring. For a single backup, manifest "moved" entries are not applied (only noted in the report); use `--all` with a directory of backups to restore a chain with renames applied.
 
 **Multiple backups in a folder:** If the path points to a directory that contains more than one backup (different basenames with both `.json` and `.tar`), the tool lists all available backups and exits without restoring. When listing, it also reports any gaps in the chain (backups referenced as parent by a manifest but not present in the folder). To restore from all of them in chronological order (merged state: final paths, deletes and renames applied), use `--all` together with `--restore`. A warning is emitted if the backup chain has gaps (e.g. a manifest references a previous backup that is not in the folder).
 
-**Conflict handling (`--conflict`):** Before writing any file, the tool checks if the destination path already exists. Default is to skip existing files (`skipall`). You can set `--conflict replace` to always overwrite, `--conflict skipsame` to skip only when the existing file has the same contents (by checksum) and abort when it differs, or `--conflict abort` to abort the restore on the first existing path.
+**Conflict handling (`--conflict`):** Before writing any file, the tool checks if the destination path already exists. Default is `skipsame`: skip if the existing file has the same contents (by checksum), abort if it differs. Use `--conflict replace` to always overwrite, or `--conflict abort` to abort the restore on the first existing path.
 
-**Unexpected files in destination (`--show-extras`):** Use `--show-extras` to have the audit report include a section listing all files present in the restoration folder that were not part of the backup. This helps you spot leftovers or stray files. The list is written only to the report file, not to the command line.
+**Audit report:** On every restore the tool writes an audit report to the restore destination: `iceshelf-restore-report-YYYYMMDD-HHMMSS.txt`. It lists restored files, skipped files, and deleted paths. Use `--show-extras` to add a section listing files in the restoration folder that were not part of the backup (helps spot leftovers or stray files). The extras list is written only to the report file, not to the command line.
 
-Note! Once the restore process has started, a failure to remove or rename/move an existing file will only cause a warning, restore will still continue.
+**Resumable restore:** Both single- and multi-archive restore record progress in `.restore/completed.lst`. If you re-run the same restore (e.g. after an interrupt), already-extracted files (matching size) are skipped. For a single backup the archive may be decrypted again, but only missing files are restored.
+
+**Restore temp directory (`--restore-temp-dir`):** Temporary decrypted archives and `completed.lst` are stored under a directory that defaults to `.restore` under the restore destination. Use `--restore-temp-dir DIR` to override (absolute path, or relative to the restore destination). Applies to both single- and multi-archive restore.
+
+Once the restore process has started, a failure to remove or rename an existing file will only cause a warning; the restore continues.
 
 ## Corrupt backup
 
@@ -56,7 +62,7 @@ If one or more files are missing (such as the manifest), you can still make `ice
 
 If the archive is corrupt but parity files are available you can try fixing it using `--repair`.
 
-Note! It will *NOT* extract any file, it will simply verify as many files as possible as well as repair and decrypt if possible.
+With `--repair` and no manifest, the tool does not extract files; it verifies as many files as possible and repairs/decrypts if possible.
 
 ## What does `--debug` do?
 
@@ -65,3 +71,17 @@ It will give you some extra information while running, which normally isn't need
 ## What does `--verbose` do?
 
 In restore mode, without `--verbose` the tool updates a single progress line (e.g. `Extracted 42 files of 100 (42% complete)`) so the screen is not filled with one line per file. With `--verbose`, each extracted or skipped file is logged. `--verbose` can be used in any mode.
+
+## Logging
+
+Use `--logfile FILE` to write log output to a file instead of stdout.
+
+## Known issues and limitations
+
+- **No partial restore:** Restore is all-or-nothing per backup (or full chain with `--all`); there is no option to restore only selected paths or globs.
+- **No path remapping:** Restore destination is a single root; backup paths cannot be mapped to different locations.
+- **Moved files in single-backup mode:** With a single backup, entries in the manifest’s "moved" section are only reported in the audit report, not applied; use `--all` with a directory of backups to apply renames.
+- **When repair is not possible:** The tool’s `--repair` option works when PAR2 parity files exist and are sufficient. If the archive is corrupt and PAR2 files are missing, or PAR2 repair fails, the tool can only report the problem; there is no other recovery path.
+- **Disk full / very large restores:** Both single- and multi-archive restore are resumable via `completed.lst`; on rerun, already-extracted files are skipped. Single-archive may decrypt the archive again but only missing files are restored. There is no special handling for out-of-disk (restore may fail partway; re-run to resume).
+- **Concurrent restores:** Restoring to the same destination from two processes could conflict on `completed.lst` and the temp dir; not supported.
+- **Key file with only public key:** For full operation (decrypt and verify) the key file should contain both public and secret key; public-only allows verification only. Use `--skip-signature` when signatures cannot be validated or are missing (e.g. backup created without signing).
