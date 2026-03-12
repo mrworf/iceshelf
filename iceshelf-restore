@@ -474,9 +474,11 @@ def open_tar_with_progress(archive_path, archive_size_bytes, progress_interval=5
 
 def get_all_backup_basenames(base_dir):
     """
-    Discover all backup basenames that have both a manifest and an archive.
+    Discover all backup basenames that have a manifest (archive optional).
     Uses only iceshelf's established filename patterns; derives basenames by
     stripping known suffixes. Returns sorted list (chronological order).
+    Includes manifest-only backups (e.g. deleted-only, moved-only) so their
+    metadata is applied during merge.
     """
     if base_dir == '':
         base_dir = './'
@@ -499,7 +501,7 @@ def get_all_backup_basenames(base_dir):
                 base = entry[:-len(suffix)]
                 has_archive.add(base)
                 break
-    restorable = sorted(has_manifest & has_archive)
+    restorable = sorted(has_manifest)
     return restorable
 
 
@@ -1009,12 +1011,15 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, config, cmd
         logging.info('Loading backup %d/%d: %s', idx, n_backups, basename)
         manifest_path = get_manifest_file(basepath, basename)
         archive_path = get_archive_file(basepath, basename)
-        if not manifest_path or not archive_path:
-            logging.error('Backup "%s" missing manifest or archive', basename)
+        if not manifest_path:
+            logging.error('Backup "%s" missing manifest', basename)
             sys.exit(1)
-        file_manifest = os.path.basename(manifest_path)
-        file_archive = os.path.basename(archive_path)
-        detect_leftovers(basepath, basename, manifest_path, archive_path, None)
+        if archive_path:
+            file_manifest = os.path.basename(manifest_path)
+            file_archive = os.path.basename(archive_path)
+            detect_leftovers(basepath, basename, manifest_path, archive_path, None)
+        else:
+            detect_leftovers(basepath, basename, manifest_path, None, None)
         if not validate_file(manifest_path, keyring_dir):
             logging.error(
                 'Manifest validation failed for "%s". '
@@ -1117,7 +1122,8 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, config, cmd
                     pre_skipped_paths.add(restore_path)
                     restore_outcome[restore_path] = 'skipped'
                     skip_reasons[restore_path] = 'already existed, same content (--conflict skipsame)'
-                    _append_completed_lst(completed_lst_path, restore_path, os.path.getsize(dest_full))
+                    if os.path.isfile(dest_full):
+                        _append_completed_lst(completed_lst_path, restore_path, os.path.getsize(dest_full))
         if merged_list:
             sys.stderr.write('\n')
             sys.stderr.flush()
@@ -1269,9 +1275,40 @@ def run_multi_archive_restore(basepath, all_basenames, restore_base, config, cmd
                                         '\rExtracted %d files of %d (%d%% complete)    ' % (processed, total_files, pct))
                                     sys.stderr.flush()
                                 continue
-                            tar.extract(member, restore_base)
+                            is_moved = (_norm_path(path_in_archive) != _norm_path(restore_path))
+                            if is_moved:
+                                tar.extract(member, restore_temp_dir)
+                                extracted_path = os.path.normpath(
+                                    os.path.join(restore_temp_dir, path_in_archive.lstrip('/')))
+                                dirname = os.path.dirname(dest_full)
+                                if dirname:
+                                    try:
+                                        os.makedirs(dirname, exist_ok=True)
+                                    except OSError as exc:
+                                        restore_failed = True
+                                        logging.error('Cannot create directory "%s": %s', dirname, exc)
+                                        sys.exit(1)
+                                try:
+                                    shutil.move(extracted_path, dest_full)
+                                except OSError as exc:
+                                    restore_failed = True
+                                    logging.error(
+                                        'Failed to move extracted file from "%s" to "%s": %s',
+                                        extracted_path, dest_full, exc)
+                                    sys.exit(1)
+                                extracted_dir = os.path.dirname(extracted_path)
+                                while (extracted_dir and extracted_dir != restore_temp_dir
+                                       and os.path.exists(extracted_dir)):
+                                    try:
+                                        os.rmdir(extracted_dir)
+                                    except OSError:
+                                        break
+                                    extracted_dir = os.path.dirname(extracted_dir)
+                            else:
+                                tar.extract(member, restore_base)
                             restore_outcome[restore_path] = 'restored'
-                            _append_completed_lst(completed_lst_path, restore_path, os.path.getsize(dest_full))
+                            if os.path.isfile(dest_full):
+                                _append_completed_lst(completed_lst_path, restore_path, os.path.getsize(dest_full))
                             if verbose:
                                 logging.info('Extracted "%s" to "%s"', path_in_archive, dest_full)
                             processed += 1
@@ -1945,7 +1982,8 @@ try:
                     pre_skipped_paths_single.add(path)
                     restore_outcome_single[path] = 'skipped'
                     skip_reasons_single[path] = 'already existed, same content (--conflict skipsame)'
-                    _append_completed_lst(completed_lst_path, path, os.path.getsize(dest_full))
+                    if os.path.isfile(dest_full):
+                        _append_completed_lst(completed_lst_path, path, os.path.getsize(dest_full))
         if modified_list:
             sys.stderr.write('\n')
             sys.stderr.flush()
@@ -2013,7 +2051,8 @@ try:
                             os.path.dirname(target_path))
                     tar.extract(item, cmdline.restore)
                     restore_outcome_single[manifest_key] = 'restored'
-                    _append_completed_lst(completed_lst_path, manifest_key, os.path.getsize(target_path))
+                    if os.path.isfile(target_path):
+                        _append_completed_lst(completed_lst_path, manifest_key, os.path.getsize(target_path))
                     processed += 1
                     if not verbose and total_files > 0:
                         pct = 100 * processed // total_files
