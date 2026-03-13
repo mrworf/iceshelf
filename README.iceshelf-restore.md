@@ -23,7 +23,7 @@ iceshelf-restore requires the **gpg** binary (GnuPG command-line tool) to be ins
 
 # Usage
 
-The tool accepts either a single file from the backup or just the prefix of the backup files. Configuration is optional, but can be provided using `--config` if you have it available. Without it you may supply the GPG user using `--user` and the passphrase using `--passphrase`. To use a key from a file instead of your keyring, use `--key-file`.
+The tool accepts either a single file from the backup or just the prefix of the backup files. You may supply the passphrase using `--passphrase`. To use a key from a file instead of your keyring, use `--key-file`.
 Running the command with no extra arguments will validate the backup and return `0` on success.
 
 If the archive is corrupt, the tool only indicates whether repair may be possible; it does not guarantee that repair will succeed.
