@@ -1,5 +1,4 @@
 from . import helper
-from subprocess import Popen, PIPE
 import logging
 import os
 import time
@@ -15,55 +14,30 @@ import random
 import threading
 from queue import Queue, Empty
 
+import boto3
+from botocore.exceptions import ClientError
+
 def isConfigured():
-  if not os.path.exists(os.path.expanduser('~/.aws/config')) or not os.path.exists(os.path.expanduser('~/.aws/credentials')):
-    logging.error('AWS is not configured, please run aws tool with configure for current user')
+  """Check that boto3 can locate credentials and region."""
+  session = boto3.Session()
+  if session.get_credentials() is None:
+    logging.error('AWS credentials not configured')
     return False
-
-  # Now that we know these files exists, check the contents
-  hasRegion = False
-  hasJSON = False
-  hasCred1 = False
-  hasCred2 = False
-  with io.open(os.path.expanduser('~/.aws/config')) as f:
-    while True:
-      line = f.readline().lower()
-      if 'region' in line:
-        hasRegion = True
-      elif 'output' in line and 'json' in line:
-        hasJSON = True
-      elif line == '':
-        break
-
-  with io.open(os.path.expanduser('~/.aws/credentials')) as f:
-    while True:
-      line = f.readline().lower()
-      if 'aws_access_key_id' in line:
-        hasCred1 = True
-      elif 'aws_secret_access_key' in line:
-        hasCred2 = True
-      elif line == '':
-        break
-
-  if not hasRegion:
-    logging.error('AWS configuration is missing region setting')
-  if not hasJSON:
-    logging.error('AWS configuration is missing output setting or it\'s not set to JSON')
-  if not hasCred1:
-    logging.error('AWS configuration is missing aws_access_key_id')
-  if not hasCred2:
-    logging.error('AWS configuration is missing aws_secret_access_key')
-  if not (hasRegion and hasJSON and hasCred1 and hasCred2):
-    logging.error('Please resolve issues by running aws tool with configure for current user')
+  if session.region_name is None:
+    logging.error('AWS region not configured')
     return False
   return True
 
 def createVault(config):
-  result = awsCommand(config, ['create-vault', '--vault-name', config["glacier-vault"]])
-  if result is None or result["code"] != 0:
-    logging.error("Failed to create vault: %s", repr(result))
-    return False
-  logging.info("Vault created")
+  client = boto3.client('glacier')
+  try:
+    client.create_vault(vaultName=config['glacier-vault'])
+  except ClientError as e:
+    code = e.response.get('Error', {}).get('Code')
+    if code != 'ResourceAlreadyExistsException':
+      logging.error('Failed to create vault: %s', e)
+      return False
+  logging.info('Vault created')
   return True
 
 class uploadCoordinator:
@@ -161,21 +135,28 @@ class uploadJob:
       return False
 
     dataRange = 'bytes %d-%d/*' % (self.offset, self.offset + self.size - 1)
+    client = boto3.client('glacier')
     self.retry = self.retries
     while self.retry > 0:
-      result = awsCommand(self.config, ['upload-multipart-part', '--vault-name', self.config['glacier-vault'], '--cli-input-json', '{"uploadId": "' + self.uploadId + '"}', '--body', self.tmpfile, '--range', dataRange])
-      if result is not None and result['json'] is not None and 'checksum' in result['json']:
-        if self.checksum != result['json']['checksum']:
-          logging.error('Hash does not match, expected %s got %s.', self.checksum, result['json']['checksum'])
+      try:
+        with open(self.tmpfile, 'rb') as fp:
+          resp = client.upload_multipart_part(
+              vaultName=self.config['glacier-vault'],
+              uploadId=self.uploadId,
+              range=dataRange,
+              body=fp
+          )
+        if self.checksum != resp.get('checksum'):
+          logging.error('Hash does not match, expected %s got %s.', self.checksum, resp.get('checksum'))
         else:
           break
-      else:
-        if 'RequestTimeoutException' in result['error']:
-          logging.warn('Timeout')
+      except ClientError as e:
+        if e.response.get('Error', {}).get('Code') == 'RequestTimeoutException':
+          logging.warning('Timeout')
         else:
-          logging.debug('Result was: ' + repr(result))
+          logging.debug('Result was: %s', e)
 
-      self.retry = self.retry - 1
+      self.retry -= 1
       logging.warning('%s @ %d failed to upload, retrying in %d seconds. %d tries left', helper.formatSize(self.size), self.offset, (10-self.retry)*30, self.retry)
       time.sleep((10-self.retry) * 30)
 
@@ -252,12 +233,19 @@ def uploadFile(config, prefix, file, bytesDone=0, bytesTotal=0, withPath=False):
     logging.error('Unable to hash file %s', file)
     return False
 
+  client = boto3.client('glacier')
+
   # Initiate the upload
-  result = awsCommand(config, ['initiate-multipart-upload', '--vault-name', config['glacier-vault'], '--archive-description', name, '--part-size', str(chunkSize)])
-  if result is None or result['code'] != 0 or 'uploadId' not in result['json']:
-    logging.error('Unable to initiate upload: %s', repr(result))
+  try:
+    resp = client.initiate_multipart_upload(
+        vaultName=config['glacier-vault'],
+        archiveDescription=name,
+        partSize=str(chunkSize)
+    )
+  except ClientError as e:
+    logging.error('Unable to initiate upload: %s', e)
     return False
-  uploadId = result['json']['uploadId']
+  uploadId = resp['uploadId']
 
   # Start sending the file, one megabyte at a time until we have none left
   offset = 0
@@ -303,14 +291,25 @@ def uploadFile(config, prefix, file, bytesDone=0, bytesTotal=0, withPath=False):
 
   if not work.finish():
     logging.error('Failed to upload the file, aborting')
-    # Note! Should use JSON since plain arguments seems to not work
-    awsCommand(config, ['abort-multipart-upload', '--vault-name', config['glacier-vault'], '--cli-input-json', '{"uploadId": "' + uploadId + '"}'])
+    try:
+      client.abort_multipart_upload(
+          vaultName=config['glacier-vault'],
+          uploadId=uploadId
+      )
+    except ClientError:
+      pass
     return False
 
   # Time to finalize this deal
-  result = awsCommand(config, ['complete-multipart-upload', '--vault-name', config['glacier-vault'], '--cli-input-json', '{"uploadId": "' + uploadId + '"}', '--checksum', hashes['final'].hexdigest(), '--archive-size', str(size)])
-  if result is None or result['code'] != 0:
-    logging.error('Unable to complete upload of %s: %s', file, repr(result))
+  try:
+    client.complete_multipart_upload(
+        vaultName=config['glacier-vault'],
+        uploadId=uploadId,
+        checksum=hashes['final'].hexdigest(),
+        archiveSize=str(size)
+    )
+  except ClientError as e:
+    logging.error('Unable to complete upload of %s: %s', file, e)
     return False
   return True
 
@@ -327,33 +326,3 @@ def uploadFiles(config, files, bytes):
     d += os.path.getsize(file)
   return True
 
-def awsCommand(config, args, dry=False):
-  if config["glacier-vault"] is None:
-    logging.error("awsCommand() called without proper settings")
-    return None
-
-  # Fake it until you make it
-  if dry:
-    time.sleep(random.randint(1, 50) / 10)
-    return  {"code" : 0, "raw" : '', 'json' : {'checksum' : 'something', 'uploadId' : 'someid' }, "error" : '' }
-
-  cmd = ['aws', '--output', 'json', 'glacier']
-  cmd += args
-  cmd += ['--account-id', '-']
-
-  #logging.debug("AWS command: " + repr(cmd))
-
-  p = Popen(cmd, stdout=PIPE, stderr=PIPE, cwd=config["prepdir"])
-  out, err = p.communicate()
-
-  jout = None
-  try:
-    jout = json.loads(out)
-  except ValueError as e:
-    logging.debug('Failed to parse AWS output as JSON: %s', e)
-
-  if out is None or out == "":
-    logging.debug("Error : " + repr(err))
-    logging.debug('Cmd: ' + repr(cmd))
-
-  return {"code" : p.returncode, "raw" : out, 'json' : jout, "error" : err }

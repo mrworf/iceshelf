@@ -1,10 +1,12 @@
 import os
 import logging
-from . import BackupProvider, _which
+import boto3
+from botocore.exceptions import ClientError
+from . import BackupProvider
 from modules import aws
 
 class GlacierProvider(BackupProvider):
-    """Upload archives to AWS Glacier using the aws CLI."""
+    """Upload archives to AWS Glacier using boto3."""
     name = 'glacier'
 
     def verify(self):
@@ -13,11 +15,15 @@ class GlacierProvider(BackupProvider):
         if not self.vault:
             logging.error('glacier provider requires "vault"')
             return False
-        if _which('aws') is None:
-            logging.error('aws command not found')
-            return False
         if not aws.isConfigured():
             return False
+        # Verify we can access Glacier
+        try:
+            boto3.client('glacier').describe_vault(vaultName=self.vault)
+        except ClientError as e:
+            if e.response.get('Error', {}).get('Code') != 'ResourceNotFoundException':
+                logging.error('Unable to access Glacier: %s', e)
+                return False
         return True
 
     def storage_id(self):
