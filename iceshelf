@@ -182,7 +182,7 @@ import argparse
 import sys
 import os.path
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import shutil
 import tarfile
@@ -403,7 +403,7 @@ if config["extra-ext"] is not None:
 
 # Prep some needed config items which we generate
 config["file-checksum"] = os.path.join(config["datadir"], "checksum.json")
-tm = datetime.utcnow()
+tm = datetime.now(timezone.utc)
 config["unique"] = "%d%02d%02d-%02d%02d%02d-%05x" % (tm.year, tm.month, tm.day, tm.hour, tm.minute, tm.second, tm.microsecond)
 config["archivedir"] = os.path.join(config["prepdir"], config["unique"])
 
