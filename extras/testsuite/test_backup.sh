@@ -10,12 +10,16 @@ COUNT=0
 function cleanup() {
   rm -rf compare data tmp content done  >/dev/null 2>/dev/null
   rm config_* >/dev/null 2>/dev/null
+  rm -f combined_test.key >/dev/null 2>/dev/null
 }
 
 function initialize() {
   # Clean and prep
   cleanup
   mkdir data tmp content done compare
+
+  # Create combined key file for iceshelf --key-file support
+  cat test_key.public test_key.private > combined_test.key
 
   # Generate content
   # First, bunch of files
@@ -348,6 +352,9 @@ OPT_SUCCESSRET=0
 OPT_IGNORECOMP=false
 for VARIANT in "${VARIATIONS[@]}"; do
   EXTRAS="[security]"
+  if [[ "$VARIANT" == *"encrypted"* ]] || [[ "$VARIANT" == *"signed"* ]]; then
+    EXTRAS="$EXTRAS\nkey file: combined_test.key\n"
+  fi
   if [[ "$VARIANT" == *"encrypted"* ]]; then
     EXTRAS="$EXTRAS\nencrypt: test@test.test\nencrypt phrase: test\n"
   fi

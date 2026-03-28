@@ -1,19 +1,24 @@
 import os
-import subprocess
 import logging
-from . import BackupProvider, _which
+from . import BackupProvider
+from modules import aws
+
 
 class S3Provider(BackupProvider):
     name = 's3'
+
     def verify(self):
         self.bucket = self.options.get('bucket')
         self.prefix = self.options.get('prefix', '')
         if not self.bucket:
             logging.error('s3 provider requires "bucket"')
             return False
-        if _which('aws') is None:
-            logging.error('aws command not found')
+        aws_config = aws.extract_aws_config(self.options)
+        client, err = aws.create_s3_client(aws_config)
+        if err:
+            logging.error('s3 provider: %s', err)
             return False
+        self.client = client
         return True
 
     def storage_id(self):
@@ -23,14 +28,9 @@ class S3Provider(BackupProvider):
     def upload_files(self, files):
         for f in files:
             key = os.path.join(self.prefix, os.path.basename(f))
-            cmd = ['aws', 's3', 'cp', f, f's3://{self.bucket}/{key}']
             try:
-                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                out, err = p.communicate()
-                if p.returncode != 0:
-                    logging.error('aws s3 cp failed: %s', err)
-                    return False
+                self.client.upload_file(f, self.bucket, key)
             except Exception:
-                logging.exception('aws s3 cp failed for %s', f)
+                logging.exception('s3 upload failed for %s', f)
                 return False
         return True

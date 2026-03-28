@@ -33,7 +33,8 @@ setting = {
   "create-filelist" : True,
   "checkupdate" : False,
   "custom-pre" : None,
-  "custom-post" : None
+  "custom-post" : None,
+  "key-file" : None
 }
 
 def getVersion():
@@ -90,7 +91,8 @@ def parse(filename, onlysecurity=False):
       "encrypt phrase": "",
       "sign phrase": "",
       "add parity": "0",
-      "encrypt manifest": "yes"
+      "encrypt manifest": "yes",
+      "key file": ""
     }
   }
 
@@ -130,6 +132,8 @@ def parse(filename, onlysecurity=False):
     return None
   elif config.get("security", "encrypt manifest").lower() == "no":
     setting["encrypt-manifest"] = False
+  if config.get("security", "key file") != "":
+    setting["key-file"] = config.get("security", "key file")
 
   # Exit early if we don't need more than security
   if onlysecurity:

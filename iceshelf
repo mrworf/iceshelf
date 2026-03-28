@@ -75,37 +75,25 @@ def create_manifest(path):
   return path
 
 
-def encrypt_file(path, gpg, armor=False):
-  with open(path, "rb") as fp:
-    gpg.encrypt_file(
-      fp,
-      config["encrypt"],
-      passphrase=config["encrypt-pw"],
-      armor=armor,
-      output=path + ".gpg",
-    )
-  if not os.path.exists(path + ".gpg"):
-    logging.error(
-      "GnuPG didn't produce an encrypted file. Please make sure GnuPG is installed and running properly")
+def encrypt_file(path, armor=False):
+  outpath = path + ".gpg"
+  ok, stderr = gpg_module.gpg_encrypt_file(
+    path, outpath, config["encrypt"], keyring_dir,
+    passphrase=config["encrypt-pw"], armor=armor)
+  if not ok or not os.path.exists(outpath):
+    logging.error("GnuPG encryption failed: %s", stderr)
     return None
   os.remove(path)
-  return path + ".gpg"
+  return outpath
 
 
-def sign_file(path, gpg, binary=False):
-  with open(path, "rb") as fp:
-    gpg.sign_file(
-      fp,
-      keyid=config["sign"],
-      passphrase=config["sign-pw"],
-      binary=binary,
-      clearsign=False,
-      output=path + (".sig" if binary else ".asc"),
-    )
+def sign_file(path, binary=False):
   outfile = path + (".sig" if binary else ".asc")
-  if not os.path.exists(outfile):
-    logging.error(
-      "GnuPG didn't produce a signed file. Please make sure GnuPG is installed and running properly")
+  ok, stderr = gpg_module.gpg_sign_file(
+    path, outfile, config["sign"], keyring_dir,
+    passphrase=config["sign-pw"], binary=binary)
+  if not ok or not os.path.exists(outfile):
+    logging.error("GnuPG signing failed: %s", stderr)
     return None
   os.remove(path)
   return outfile
@@ -120,7 +108,6 @@ def gatherData():
   base = os.path.join(config["prepdir"], config["prefix"] + config["unique"])
   file_archive = None
   file_manifest = base + ".json"
-  gpg = gnupg.GPG(options=['-z', '0'])
 
   havearchive = False
   if len(newFiles) - len(movedFiles):
@@ -136,11 +123,11 @@ def gatherData():
     file_manifest = create_manifest(file_manifest)
 
   if config["encrypt"] and havearchive:
-    file_archive = encrypt_file(file_archive, gpg, armor=False)
+    file_archive = encrypt_file(file_archive, armor=False)
     if file_archive is None:
       return None
   if config["sign"] and havearchive:
-    file_archive = sign_file(file_archive, gpg, binary=True)
+    file_archive = sign_file(file_archive, binary=True)
     if file_archive is None:
       return None
 
@@ -150,13 +137,13 @@ def gatherData():
       return None
 
   if config["encrypt"] and config["encrypt-manifest"] and config["manifest"]:
-    file_manifest = encrypt_file(file_manifest, gpg, armor=True)
+    file_manifest = encrypt_file(file_manifest, armor=True)
     if file_manifest is None:
       return None
 
   if config["sign"]:
     if config["manifest"]:
-      file_manifest = sign_file(file_manifest, gpg)
+      file_manifest = sign_file(file_manifest)
       if file_manifest is None:
         return None
     if config["parity"] > 0:
@@ -164,7 +151,7 @@ def gatherData():
       for f in os.listdir(config["prepdir"]):
         if f.endswith('.par2'):
           f = os.path.join(config["prepdir"], f)
-          signed = sign_file(f, gpg, binary=True)
+          signed = sign_file(f, binary=True)
           if signed is None:
             return None
 
@@ -172,11 +159,12 @@ def gatherData():
     file_list = base + ".lst"
     fileutils.generateFilelist(config["prepdir"], file_list)
     if config["sign"]:
-      signed = sign_file(file_list, gpg)
+      signed = sign_file(file_list)
       if signed is None:
         return None
 
   return os.listdir(config["prepdir"])
+import atexit
 import logging
 import argparse
 import sys
@@ -186,11 +174,12 @@ from datetime import datetime, timezone
 import time
 import shutil
 import tarfile
-import gnupg
+import tempfile
 from subprocess import Popen, PIPE
 
 import modules.configuration as configuration
 import modules.fileutils as fileutils
+import modules.gpg as gpg_module
 import modules.helper as helper
 import modules.providers as providers
 
@@ -222,6 +211,7 @@ parser.add_argument('--find', metavar='STRING', help='Searches the backup archiv
 parser.add_argument('--show', metavar='ARCHIVE', help='Shows members of a certain archive')
 parser.add_argument('--modified', action='store_true', default=False, help='Show all files which exists multiple times due to modifications')
 parser.add_argument('--full', action='store_true', default=False, help='Full backup, regardless of changes to files')
+parser.add_argument('--key-file', metavar="FILE", dest='key_file', help='GPG key file for encryption/signing (uses isolated keyring)')
 parser.add_argument('--list', type=str.lower, choices=['files', 'members', 'sets'], help='List currently backed up structure')
 parser.add_argument('config', metavar="CONFIG", help="Which config file to load")
 cmdline = parser.parse_args()
@@ -254,13 +244,38 @@ if cmdline.logfile:
   file_handler.setFormatter(logging.Formatter(logformat))
   logger.addHandler(file_handler)
 
-logging.getLogger("gnupg").setLevel(logging.WARNING)
 logging.getLogger("shutil").setLevel(logging.WARNING)
 
-# Make sure we have the correct gnupg module
-if not "encrypt_file" in dir(gnupg.GPG()):
-  logging.error("Current GnuPG python module does not support file encryption, please check FAQ section in documentation")
-  sys.exit(255)
+keyring_dir = None
+_temp_keyring_dir = None
+
+def _cleanup_keyring():
+  if _temp_keyring_dir and os.path.isdir(_temp_keyring_dir):
+    for root, dirs, files in os.walk(_temp_keyring_dir, topdown=False):
+      for name in files:
+        p = os.path.join(root, name)
+        try:
+          with open(p, 'r+b') as f:
+            length = f.seek(0, 2)
+            f.seek(0)
+            f.write(b'\x00' * length)
+        except OSError:
+          pass
+        try:
+          os.unlink(p)
+        except OSError:
+          pass
+      for name in dirs:
+        try:
+          os.rmdir(os.path.join(root, name))
+        except OSError:
+          pass
+    try:
+      os.rmdir(_temp_keyring_dir)
+    except OSError:
+      pass
+
+atexit.register(_cleanup_keyring)
 
 #######################
 
@@ -383,18 +398,32 @@ if cmdline.debug:
 if config["checkupdate"]:
   checkNewVersion()
 
-# Also make sure any GnuPG key is available and valid
+# Set up GPG keyring (isolated when --key-file or config key-file is used)
 if config["encrypt"] or config["sign"]:
-  gpg = gnupg.GPG(options=['-z', '0']) # Do not use GPG compression since we use bzip2
+  key_file = getattr(cmdline, 'key_file', None) or config.get("key-file")
+  if key_file:
+    if not os.path.isfile(key_file):
+      logging.error("Key file not found: %s", key_file)
+      sys.exit(1)
+    _temp_keyring_dir = tempfile.mkdtemp(prefix='iceshelf-keyring.')
+    keyring_dir = _temp_keyring_dir
+    with open(key_file, 'rb') as kf:
+      key_data = kf.read()
+    ok, err = gpg_module.gpg_import_and_trust(keyring_dir, key_data)
+    if not ok:
+      logging.error("Failed to import key file: %s", err)
+      sys.exit(1)
   if config["encrypt"]:
-    test = gpg.encrypt("test", config["encrypt"], passphrase=config["encrypt-pw"], armor=True)
-    if len(str(test)) == 0:
-      logging.error("Can't find encryption key \"%s\"" % config["encrypt"])
+    ok, err = gpg_module.gpg_test_encrypt(config["encrypt"], keyring_dir,
+                                          passphrase=config["encrypt-pw"])
+    if not ok:
+      logging.error("Can't find encryption key \"%s\": %s", config["encrypt"], err)
       sys.exit(1)
   if config["sign"]:
-    test = gpg.sign("test", keyid=config["sign"], passphrase=config["sign-pw"], binary=False)
-    if len(str(test)) == 0:
-      logging.error("Can't find sign key \"%s\"" % config["sign"])
+    ok, err = gpg_module.gpg_test_sign(config["sign"], keyring_dir,
+                                       passphrase=config["sign-pw"])
+    if not ok:
+      logging.error("Can't find sign key \"%s\": %s", config["sign"], err)
       sys.exit(1)
 
 # Add more extensions (if provided)

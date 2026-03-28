@@ -65,8 +65,16 @@ for VARIANT in "${VARIATIONS[@]}"; do
   mkdir content tmp data done restore restore2
   echo "hello restore" > content/file.txt
 
+  # Create combined key file for iceshelf key-file support
+  cat test_key.public test_key.private > combined_test.key
+
   # Compose additional configuration depending on current variant
   EXTRAS="[security]"
+  RESTORE_GPG_ARGS=""
+  if [[ "$VARIANT" == *"encrypted"* ]] || [[ "$VARIANT" == *"signed"* ]]; then
+    EXTRAS="$EXTRAS\nkey file: $(pwd)/combined_test.key"
+    RESTORE_GPG_ARGS="--key-file $(pwd)/combined_test.key --passphrase test"
+  fi
   if [[ "$VARIANT" == *"encrypted"* ]]; then
     EXTRAS="$EXTRAS\nencrypt: test@test.test\nencrypt phrase: test"
   fi
@@ -119,14 +127,14 @@ CONF
   done
 
   # Sanity check that list and validate output mention the expected texts
-  LISTOUT="$(../../iceshelf-restore --list "$MANIFEST")"
+  LISTOUT="$(../../iceshelf-restore $RESTORE_GPG_ARGS --list "$MANIFEST")"
   echo "$LISTOUT" | grep -q "Modified or new file" || {
     echo "list output did not contain expected entry";
     echo "$LISTOUT";
     exit 1;
   }
 
-  VALOUT="$(../../iceshelf-restore --validate "$MANIFEST")"
+  VALOUT="$(../../iceshelf-restore $RESTORE_GPG_ARGS --validate "$MANIFEST")"
   echo "$VALOUT" | grep -q "Validating metadata files" || {
     echo "validate output missing expected text";
     echo "$VALOUT";
@@ -134,7 +142,7 @@ CONF
   }
 
   # Restore using the manifest path and verify the result matches
-  ../../iceshelf-restore --restore restore "$MANIFEST"
+  ../../iceshelf-restore $RESTORE_GPG_ARGS --restore restore "$MANIFEST"
   DEST="restore$(pwd)/content"
   if ! diff -r content "$DEST" >diff.out; then
     echo "Mismatch after manifest restore"
@@ -144,7 +152,7 @@ CONF
   rm diff.out
 
   # Restore using the prefix notation (no manifest) and verify again
-  ../../iceshelf-restore --restore restore2 "$PREFIX"
+  ../../iceshelf-restore $RESTORE_GPG_ARGS --restore restore2 "$PREFIX"
   DEST2="restore2$(pwd)/content"
   if ! diff -r content "$DEST2" >diff.out; then
     echo "Mismatch after prefix restore"
@@ -155,11 +163,11 @@ CONF
 
   # Negative tests: remove the manifest and ensure restore/validate fail
   mv "$MANIFEST" "$MANIFEST.bak"
-  if ../../iceshelf-restore "$PREFIX" 2>/dev/null; then
+  if ../../iceshelf-restore $RESTORE_GPG_ARGS "$PREFIX" 2>/dev/null; then
     echo "restore succeeded unexpectedly when manifest missing"
     exit 1
   fi
-  if ../../iceshelf-restore --force --validate "$PREFIX" 2>/dev/null; then
+  if ../../iceshelf-restore $RESTORE_GPG_ARGS --force --validate "$PREFIX" 2>/dev/null; then
     echo "forced validation unexpectedly succeeded"
     exit 1
   fi
@@ -169,16 +177,18 @@ CONF
   # data is present we also exercise the repair functionality.
   cp "$ARCHIVE" "$ARCHIVE.bak"
   dd if=/dev/urandom of="$ARCHIVE" bs=1 count=10 seek=10 conv=notrunc >/dev/null 2>&1
-  if ../../iceshelf-restore --validate "$MANIFEST" 2>/dev/null; then
+  if ../../iceshelf-restore $RESTORE_GPG_ARGS --validate "$MANIFEST" 2>/dev/null; then
     echo "corrupt archive validated unexpectedly"
     exit 1
   fi
   if [[ "$VARIANT" == *"parity"* ]]; then
-    ../../iceshelf-restore --repair --validate "$MANIFEST" || true
+    ../../iceshelf-restore $RESTORE_GPG_ARGS --repair --validate "$MANIFEST" || true
   fi
   mv "$ARCHIVE.bak" "$ARCHIVE"
 
 done
+
+rm -rf content tmp data done restore restore2 config_restore combined_test.key diff.out
 
 # All variants completed successfully
 echo "iceshelf-restore test suite completed successfully"

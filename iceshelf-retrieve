@@ -16,35 +16,15 @@ import threading
 import time
 from queue import Queue
 
-import boto3
-import yaml
 from botocore.exceptions import ClientError, NoCredentialsError, NoRegionError
 
 from modules import aws
+from modules import helper
 
 
 STATE_VERSION = 1
 
-# Sentinel put on the download queue to tell workers to exit
 _DOWNLOAD_QUEUE_SENTINEL = None
-
-AWS_CONFIG_KEYS = (
-    "region",
-    "access_key_id",
-    "secret_access_key",
-    "session_token",
-    "profile",
-    "endpoint_url",
-)
-
-
-def load_aws_config_file(path):
-    """Load AWS config from a YAML file. Returns a dict with only known keys."""
-    if not path or not os.path.exists(path):
-        return {}
-    with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    return {k: data[k] for k in AWS_CONFIG_KEYS if k in data and data[k] is not None}
 
 
 def merge_aws_config(file_config, args):
@@ -63,62 +43,6 @@ def merge_aws_config(file_config, args):
     if getattr(args, "aws_endpoint_url", None):
         merged["endpoint_url"] = args.aws_endpoint_url
     return merged
-
-
-def create_glacier_client(aws_config):
-    """Create a boto3 Glacier client from merged config. Returns (client, None) or (None, error_msg)."""
-    region = aws_config.get("region")
-    access_key_id = aws_config.get("access_key_id")
-    secret_access_key = aws_config.get("secret_access_key")
-    session_token = aws_config.get("session_token")
-    profile = aws_config.get("profile")
-    endpoint_url = aws_config.get("endpoint_url")
-
-    if not region:
-        return (
-            None,
-            "AWS region is required. Use: --aws-region us-east-1 (or set 'region' in config file).",
-        )
-    has_explicit_creds = access_key_id and secret_access_key
-    if not has_explicit_creds and not profile:
-        return (
-            None,
-            "AWS credentials required. Use: --aws-access-key-id KEY --aws-secret-access-key SECRET (or set in config file), or --aws-profile NAME.",
-        )
-
-    try:
-        if has_explicit_creds:
-            session = boto3.Session(
-                aws_access_key_id=access_key_id,
-                aws_secret_access_key=secret_access_key,
-                aws_session_token=session_token,
-                region_name=region,
-            )
-        else:
-            session = boto3.Session(profile_name=profile, region_name=region)
-        client_kwargs = {"service_name": "glacier", "region_name": region}
-        if endpoint_url:
-            client_kwargs["endpoint_url"] = endpoint_url
-        client = session.client(**client_kwargs)
-        return (client, None)
-    except NoRegionError:
-        return (
-            None,
-            "AWS region is required. Use: --aws-region REGION (or set 'region' in config file).",
-        )
-    except NoCredentialsError:
-        return (
-            None,
-            "AWS credentials required. Use: --aws-access-key-id and --aws-secret-access-key (or set in config file), or --aws-profile NAME.",
-        )
-    except ClientError as e:
-        code = e.response.get("Error", {}).get("Code", "Unknown")
-        return (
-            None,
-            f"AWS error ({code}). Check vault name, permissions, and network.",
-        )
-    except Exception as e:
-        return (None, str(e))
 
 
 def ensure_inventory(client, vault, datadir, wait_until_ready=False, poll_interval_secs=900):
@@ -273,9 +197,9 @@ def download_job(client, vault, entry, destdir):
                     "%s: %s/%s @ %s\r"
                     % (
                         entry["name"],
-                        aws.helper.formatSize(done),
-                        aws.helper.formatSize(total),
-                        aws.helper.formatSpeed(speed),
+                        helper.formatSize(done),
+                        helper.formatSize(total),
+                        helper.formatSpeed(speed),
                     )
                 )
                 sys.stdout.flush()
@@ -421,9 +345,9 @@ def main():
     datadir = os.path.dirname(db_path) if db_path else args.dest
     os.makedirs(datadir, exist_ok=True)
 
-    file_config = load_aws_config_file(args.aws_config)
+    file_config = aws.load_aws_config_file(args.aws_config)
     aws_config = merge_aws_config(file_config, args)
-    client, err = create_glacier_client(aws_config)
+    client, err = aws.create_glacier_client(aws_config)
     if err:
         logging.error("%s", err)
         return 1

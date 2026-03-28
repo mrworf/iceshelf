@@ -114,33 +114,24 @@ There, I said it. Enough with disclaimers now :-)
 
 In order to be able to run this, you need a few other parts installed.
 
-- OpenPGP / GNU Privacy Guard (typically referred to as `gpg`)
-- python-gnupg - Encryption & Signature (NOT `gnupg`, it's `python-gnupg`)
-  Ubuntu comes with a version, but unfortunately it's too old. You should install this using the `pip3` tool to make sure you get a current version.
-- par2 - Parity tool
-- aws - In order to upload archives to AWS services such as S3 or Glacier
+- OpenPGP / GNU Privacy Guard (the `gpg` command-line tool) - for encryption and signatures
+- par2 - Parity tool (optional, only needed for parity support)
+- Python packages: `boto3`, `PyYAML` (install with `pip3 install -r requirements.txt`)
 
 ### Installing on Ubuntu
 
-This is the simple version which points out what commands to run. Please consider reading through before running since it will install things (such as pip) in a manner which you might not agree with. It is based on what and how I installed the requirements on a Ubuntu LTS 14 release.
-
 1. GPG
   Easy enough, ubuntu comes with it pre-installed
-2. GnuPG (requires pip3)
+2. Python dependencies
   ```
-  sudo apt-get install python3-dev
-  sudo apt-get install python3-pip
-  sudo -H pip3 install python-gnupg
+  sudo apt-get install python3-dev python3-pip
+  pip3 install -r requirements.txt
   ```
 
-3. PAR2 for parity
+3. PAR2 for parity (optional)
   ```
   sudo apt-get install par2
   ```
-
-4. AWS CLI
-  Install the `aws` command by following the official instructions:
-  <https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html>
 
 For more details, see the [step-by-step guide](https://github.com/mrworf/iceshelf/wiki) in the wiki.
 
@@ -403,6 +394,12 @@ If your signature key needs a passphrase, this is the place you put it.
 
 *default is blank*
 
+#### key file
+
+Path to a GPG key file containing the keys to use for encryption and/or signing. When set, iceshelf creates an isolated temporary keyring (your existing keyring is never touched). The key file should contain both the public key and the private key. This can also be overridden from the command line with `--key-file`.
+
+*default is blank (use the system keyring)*
+
 #### encrypt manifest
 
 If you're worried that the use of a manifest file (which describes the changes contained in the backup, see `delta manifest` under `options`), specifying this option will encrypt the manifest as well (using the same key as `encrypt` above). If you haven't enabled `delta manifest`, this option has no effect.
@@ -438,6 +435,8 @@ You can also provide a few options via the commandline, these are not available 
 `--show <archive>` lists all files components which makes up a particular backup. This is refering to the archive file, manifest, etc. Not the contents of the actual backup. Helpful when you need to retreive a backup and you want to know all the files.
 
 `--full` forces a complete backup, foregoing the incremential logic.
+
+`--key-file <file>` use GPG keys from the given file instead of the default keyring. When set, an isolated temporary keyring is created for all GPG operations so your existing keyring is never modified. The key file should contain both the public key (for encryption) and private key (for signing). This overrides the `key file` option in the config's `[security]` section.
 
 `--list files` shows the current state of your backup, as iceshelf knows it
 
@@ -477,11 +476,6 @@ To download archives stored in Glacier use the [iceshelf-retrieve](README.iceshe
 ## I keep getting "Signature not yet current" errors when uploading
 
 This is caused by your system clock being off by more than 5 minutes. It's highly recommended that you run a time synchronization daemon such as NTPd on the machine which is responsible for uploading the backup to AWS.
-
-## When I run the tool, it says "Current GnuPG python module does not support file encryption, please check FAQ section in documentation"
-
-Unfortunately, there is both a gnupg and a python-gnupg implementation. This tool relies on the latter. If you get this error, then you've installed the `gnupg` version instead of `python-gnupg`.
-To fix this, please uninstall the wrong one using either the package manager or `sudo pip3 uninstall gnupg` followed by the correct one `sudo -H pip3 install python-gnupg`
 
 ## I get "Filename '&lt;some file&gt;' is corrupt, please rename it. Will be skipped for now" warnings
 

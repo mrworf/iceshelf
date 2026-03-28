@@ -1,5 +1,9 @@
 # pylint: disable=invalid-name
-"""GPG helpers for iceshelf-restore (subprocess-based, no python-gnupg)."""
+"""GPG helpers (subprocess-based, no python-gnupg).
+
+Provides encrypt, sign, decrypt, verify and key-import operations
+used by iceshelf, iceshelf-restore and the test suite.
+"""
 
 import os
 import subprocess
@@ -216,3 +220,117 @@ def gpg_import_and_trust(keyring_dir, key_data_bytes):
         return True, ''
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)
+
+
+def gpg_encrypt_file(input_path, output_path, recipient, keyring_dir=None,
+                     passphrase=None, armor=False):
+    """Encrypt input_path to output_path for recipient. Return (success, stderr)."""
+    args = _base_args(keyring_dir) + ['-z', '0', '--encrypt',
+                                       '--recipient', recipient,
+                                       '--output', output_path]
+    if armor:
+        args.append('--armor')
+    env = gpg_env(keyring_dir)
+    passphrase_file = None
+    try:
+        extra, _, passphrase_file = _passphrase_args(passphrase, env)
+        args.extend(extra)
+        args.append(input_path)
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=3600,
+        )
+        stderr = (result.stderr or '').strip()
+        return result.returncode == 0, stderr
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    finally:
+        _cleanup_passphrase_file(passphrase_file)
+
+
+def gpg_sign_file(input_path, output_path, keyid, keyring_dir=None,
+                  passphrase=None, binary=False):
+    """Create an inline signature wrapping input_path. Return (success, stderr).
+
+    The original data is embedded inside the signed output so the recipient
+    can extract it with ``gpg --decrypt``.
+
+    binary=True  -> binary signed message (--sign)
+    binary=False -> ASCII-armored signed message (--sign --armor)
+    """
+    args = _base_args(keyring_dir) + ['--sign',
+                                       '--local-user', keyid,
+                                       '--output', output_path]
+    if not binary:
+        args.append('--armor')
+    env = gpg_env(keyring_dir)
+    passphrase_file = None
+    try:
+        extra, _, passphrase_file = _passphrase_args(passphrase, env)
+        args.extend(extra)
+        args.append(input_path)
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=3600,
+        )
+        stderr = (result.stderr or '').strip()
+        return result.returncode == 0, stderr
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    finally:
+        _cleanup_passphrase_file(passphrase_file)
+
+
+def gpg_test_encrypt(recipient, keyring_dir=None, passphrase=None):
+    """Quick test that we can encrypt for recipient. Return (success, stderr)."""
+    args = _base_args(keyring_dir) + ['-z', '0', '--encrypt',
+                                       '--recipient', recipient,
+                                       '--armor']
+    env = gpg_env(keyring_dir)
+    passphrase_file = None
+    try:
+        extra, _, passphrase_file = _passphrase_args(passphrase, env)
+        args.extend(extra)
+        result = subprocess.run(
+            args,
+            input=b'test',
+            capture_output=True,
+            env=env,
+            timeout=30,
+        )
+        stderr = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+        return result.returncode == 0 and len(result.stdout or b'') > 0, stderr
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    finally:
+        _cleanup_passphrase_file(passphrase_file)
+
+
+def gpg_test_sign(keyid, keyring_dir=None, passphrase=None):
+    """Quick test that we can sign with keyid. Return (success, stderr)."""
+    args = _base_args(keyring_dir) + ['--detach-sign', '--armor',
+                                       '--local-user', keyid]
+    env = gpg_env(keyring_dir)
+    passphrase_file = None
+    try:
+        extra, _, passphrase_file = _passphrase_args(passphrase, env)
+        args.extend(extra)
+        result = subprocess.run(
+            args,
+            input=b'test',
+            capture_output=True,
+            env=env,
+            timeout=30,
+        )
+        stderr = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+        return result.returncode == 0 and len(result.stdout or b'') > 0, stderr
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    finally:
+        _cleanup_passphrase_file(passphrase_file)
