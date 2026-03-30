@@ -154,7 +154,7 @@ class TestMergeConfigs:
     # -- basic merging --
 
     def test_baseline_values_carry_through(self, layout):
-        merged = entrypoint.merge_configs(
+        merged, _ = entrypoint.merge_configs(
             layout["baseline"], layout["override"], layout["folder"], layout["name"]
         )
         cfg = self._read_merged(merged)
@@ -165,7 +165,7 @@ class TestMergeConfigs:
         _write_conf(layout["baseline"],
                      "[options]\ncompress: yes\n[provider-s3]\ntype: s3\nbucket: b\n")
         _write_conf(layout["override"], "[options]\ncompress: no\n")
-        merged = entrypoint.merge_configs(
+        merged, _ = entrypoint.merge_configs(
             layout["baseline"], layout["override"], layout["folder"], layout["name"]
         )
         cfg = self._read_merged(merged)
@@ -173,7 +173,7 @@ class TestMergeConfigs:
 
     def test_new_section_from_override(self, layout):
         _write_conf(layout["override"], "[security]\nencrypt: me@example.com\n")
-        merged = entrypoint.merge_configs(
+        merged, _ = entrypoint.merge_configs(
             layout["baseline"], layout["override"], layout["folder"], layout["name"]
         )
         cfg = self._read_merged(merged)
@@ -199,7 +199,7 @@ class TestMergeConfigs:
     # -- auto-generated sources --
 
     def test_auto_sources(self, layout):
-        merged = entrypoint.merge_configs(
+        merged, _ = entrypoint.merge_configs(
             layout["baseline"], layout["override"], layout["folder"], layout["name"]
         )
         cfg = self._read_merged(merged)
@@ -211,7 +211,7 @@ class TestMergeConfigs:
         _write_conf(layout["baseline"],
                      "[paths]\nprep dir: /wrong\ndata dir: /wrong\ndone dir: /wrong\n"
                      "[provider-cp]\ntype: cp\ndest: /x\n")
-        merged = entrypoint.merge_configs(
+        merged, _ = entrypoint.merge_configs(
             layout["baseline"], layout["override"], layout["folder"], layout["name"]
         )
         cfg = self._read_merged(merged)
@@ -223,7 +223,7 @@ class TestMergeConfigs:
     # -- exclusion rule --
 
     def test_iceshelf_exclusion_injected(self, layout):
-        merged = entrypoint.merge_configs(
+        merged, _ = entrypoint.merge_configs(
             layout["baseline"], layout["override"], layout["folder"], layout["name"]
         )
         cfg = self._read_merged(merged)
@@ -233,7 +233,7 @@ class TestMergeConfigs:
         _write_conf(layout["baseline"],
                      "[exclude]\nbigfiles=*.iso\n[provider-s3]\ntype: s3\nbucket: b\n")
         _write_conf(layout["override"], "[exclude]\ntmpfiles=*.tmp\n")
-        merged = entrypoint.merge_configs(
+        merged, _ = entrypoint.merge_configs(
             layout["baseline"], layout["override"], layout["folder"], layout["name"]
         )
         cfg = self._read_merged(merged)
@@ -254,7 +254,7 @@ class TestMergeConfigs:
             entrypoint.merge_configs(baseline, override, str(folder), "data")
 
     def test_provider_from_baseline_preserved(self, layout):
-        merged = entrypoint.merge_configs(
+        merged, _ = entrypoint.merge_configs(
             layout["baseline"], layout["override"], layout["folder"], layout["name"]
         )
         cfg = self._read_merged(merged)
@@ -264,7 +264,7 @@ class TestMergeConfigs:
     def test_provider_override_replaces_values(self, layout):
         _write_conf(layout["override"],
                      "[provider-s3]\ntype: s3\nbucket: other-bucket\n")
-        merged = entrypoint.merge_configs(
+        merged, _ = entrypoint.merge_configs(
             layout["baseline"], layout["override"], layout["folder"], layout["name"]
         )
         cfg = self._read_merged(merged)
@@ -273,12 +273,95 @@ class TestMergeConfigs:
     # -- output file location --
 
     def test_merged_file_location(self, layout):
-        merged = entrypoint.merge_configs(
+        merged, _ = entrypoint.merge_configs(
             layout["baseline"], layout["override"], layout["folder"], layout["name"]
         )
         expected = os.path.join(layout["iceshelf_dir"], ".merged.conf")
         assert merged == expected
         assert os.path.isfile(merged)
+
+    # -- auto prefix --
+
+    def test_auto_prefix_env_overrides_existing(self, layout):
+        _write_conf(layout["baseline"],
+                     "[options]\nprefix: general\n[provider-s3]\ntype: s3\nbucket: b\n")
+        merged, was_auto = entrypoint.merge_configs(
+            layout["baseline"], layout["override"], layout["folder"], layout["name"],
+            auto_prefix=True,
+        )
+        cfg = self._read_merged(merged)
+        assert cfg.get("options", "prefix") == "photos"
+        assert was_auto is True
+
+    def test_auto_prefix_env_overrides_empty(self, layout):
+        _write_conf(layout["baseline"],
+                     "[options]\nprefix:\n[provider-s3]\ntype: s3\nbucket: b\n")
+        merged, was_auto = entrypoint.merge_configs(
+            layout["baseline"], layout["override"], layout["folder"], layout["name"],
+            auto_prefix=True,
+        )
+        cfg = self._read_merged(merged)
+        assert cfg.get("options", "prefix") == "photos"
+        assert was_auto is True
+
+    def test_missing_prefix_auto_generated(self, layout):
+        _write_conf(layout["baseline"],
+                     "[options]\ncompress: yes\n[provider-s3]\ntype: s3\nbucket: b\n")
+        merged, was_auto = entrypoint.merge_configs(
+            layout["baseline"], layout["override"], layout["folder"], layout["name"],
+            auto_prefix=False,
+        )
+        cfg = self._read_merged(merged)
+        assert cfg.get("options", "prefix") == "photos"
+        assert was_auto is True
+
+    def test_missing_options_section_auto_generates_prefix(self, layout):
+        _write_conf(layout["baseline"], "[provider-s3]\ntype: s3\nbucket: b\n")
+        merged, was_auto = entrypoint.merge_configs(
+            layout["baseline"], layout["override"], layout["folder"], layout["name"],
+            auto_prefix=False,
+        )
+        cfg = self._read_merged(merged)
+        assert cfg.get("options", "prefix") == "photos"
+        assert was_auto is True
+
+    def test_explicit_prefix_preserved(self, layout):
+        _write_conf(layout["baseline"],
+                     "[options]\nprefix: general\n[provider-s3]\ntype: s3\nbucket: b\n")
+        merged, was_auto = entrypoint.merge_configs(
+            layout["baseline"], layout["override"], layout["folder"], layout["name"],
+            auto_prefix=False,
+        )
+        cfg = self._read_merged(merged)
+        assert cfg.get("options", "prefix") == "general"
+        assert was_auto is False
+
+    def test_empty_prefix_preserved(self, layout):
+        _write_conf(layout["baseline"],
+                     "[options]\nprefix:\n[provider-s3]\ntype: s3\nbucket: b\n")
+        merged, was_auto = entrypoint.merge_configs(
+            layout["baseline"], layout["override"], layout["folder"], layout["name"],
+            auto_prefix=False,
+        )
+        cfg = self._read_merged(merged)
+        assert cfg.get("options", "prefix") == ""
+        assert was_auto is False
+
+    def test_auto_prefix_returns_flag_true(self, layout):
+        _, was_auto = entrypoint.merge_configs(
+            layout["baseline"], layout["override"], layout["folder"], layout["name"],
+            auto_prefix=True,
+        )
+        assert was_auto is True
+
+    def test_explicit_prefix_returns_flag_false(self, layout):
+        _write_conf(layout["baseline"],
+                     "[options]\nprefix: myprefix\n[provider-s3]\ntype: s3\nbucket: b\n")
+        _, was_auto = entrypoint.merge_configs(
+            layout["baseline"], layout["override"], layout["folder"], layout["name"],
+            auto_prefix=False,
+        )
+        assert was_auto is False
 
 
 # ---------------------------------------------------------------------------

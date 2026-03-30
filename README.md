@@ -28,6 +28,16 @@ If used with immutable storage, then it also provides protection against ransomw
 - Provides paper-based GPG key backup/restore solution
 - Most features can be turned on/off and customized
 
+## What's in this repo
+
+- `iceshelf` - the main backup tool
+- `iceshelf-restore` - validate and restore backups
+- `iceshelf-retrieve` - retrieve archives from Glacier
+- [PROVIDERS.md](PROVIDERS.md) - canonical provider reference
+- [DOCKER.md](DOCKER.md) - running iceshelf in Docker
+- `extras/analog-key.sh` - make a paper backup of a GPG key
+- `extras/testsuite/` - end-to-end backup/restore tests
+
 ## Backup providers
 
 Define one or more `provider` sections in the configuration file. Each section
@@ -50,9 +60,7 @@ type: s3
 bucket: mybucket
 ```
 
-Refer to `providers/PROVIDERS.md` for the canonical provider reference. The
-individual files in `providers/*.md` remain available as supplemental notes for
-each provider.
+Refer to [PROVIDERS.md](PROVIDERS.md) for the canonical provider reference.
 
 #### Migrating from older versions
 
@@ -360,7 +368,7 @@ What essentially happens is that the "my rules" line is replaced with all the ru
 Providers control where your backups are stored. Create one or more sections with
 names beginning with `provider-`. Each section must define a `type` matching one
 of the built‑in providers (cp, sftp, scp, s3 or glacier) and any additional
-options documented in `providers/PROVIDERS.md`.
+options documented in [PROVIDERS.md](PROVIDERS.md).
 
 Example:
 
@@ -410,7 +418,22 @@ If your signature key needs a passphrase, this is the place you put it.
 
 #### key file
 
-Path to a GPG key file containing the keys to use for encryption and/or signing. When set, iceshelf creates an isolated temporary keyring (your existing keyring is never touched). The key file should contain both the public key and the private key. This can also be overridden from the command line with `--key-file`.
+Path to a GPG key file containing the OpenPGP material needed for encryption
+and/or signing. The file may be ASCII-armored or a binary export. When set,
+iceshelf creates an isolated temporary keyring so your existing keyring is
+never touched.
+
+For `encrypt`, the key file must contain the recipient public key. For `sign`,
+it must contain the signing secret key. If you use both options, include both
+the required public and secret key material. If encryption and signing use
+different identities, the file must contain the keys needed for both.
+
+This can also be overridden from the command line with `--key-file`.
+
+If you rely on a key file, make an offline copy of it or of the secret key it
+contains. [`extras/analog-key.sh`](extras/analog-key.sh)
+can turn a GPG secret key into printable QR pages so you still have a recovery
+path when disks or other media fail.
 
 *default is blank (use the system keyring)*
 
@@ -450,7 +473,7 @@ You can also provide a few options via the commandline, these are not available 
 
 `--full` forces a complete backup, foregoing the incremential logic.
 
-`--key-file <file>` use GPG keys from the given file instead of the default keyring. When set, an isolated temporary keyring is created for all GPG operations so your existing keyring is never modified. The key file should contain both the public key (for encryption) and private key (for signing). This overrides the `key file` option in the config's `[security]` section.
+`--key-file <file>` use GPG keys from the given file instead of the default keyring. The file may be ASCII-armored or a binary OpenPGP export. Include the recipient public key for encryption, the signing secret key for signing, and both if you use both operations or separate identities. When set, an isolated temporary keyring is created for all GPG operations so your existing keyring is never modified. This overrides the `key file` option in the config's `[security]` section.
 
 `--list files` shows the current state of your backup, as iceshelf knows it
 
@@ -479,11 +502,6 @@ Depending on what happened during the run, iceshelf will return the following ex
 # Retrieving backups
 
 To download archives stored in Glacier use the [iceshelf-retrieve](README.iceshelf-retrieve.md) helper. It manages Glacier jobs and verifies files automatically. You can fetch one or more backups, or use `--all` to restore everything directly from the vault inventory.
-
-# Thoughts
-
-- Better options than par2 which are open-source?
-- JSON is probably not going to cut-it in the future for local metadata storage
 
 # FAQ
 

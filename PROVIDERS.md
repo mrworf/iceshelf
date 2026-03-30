@@ -108,6 +108,19 @@ Uploads backup files to a remote host using the system `scp` command.
 - SCP uploads are straightforward, but they do not support resume or post-upload
   verification in iceshelf.
 
+### Passwordless SSH quick guide
+
+Set up SSH keys once, then point `key` at the private key path:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519
+ssh-copy-id -i ~/.ssh/id_ed25519.pub backup@backup.example.com
+ssh -i ~/.ssh/id_ed25519 backup@backup.example.com true
+```
+
+If `ssh-copy-id` is not available, append the `.pub` file to
+`~backup/.ssh/authorized_keys` on the remote host manually.
+
 ### Example
 
 ```ini
@@ -152,6 +165,19 @@ resumable uploads, retries, and optional post-upload verification.
   host. If that command is unavailable, iceshelf falls back to a size-only
   check and logs a warning.
 - This provider requires the Python package `paramiko`.
+
+### Passwordless SSH quick guide
+
+Use the same basic SSH-key flow as `scp`, then reference the private key in the
+provider config:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519
+ssh-copy-id -i ~/.ssh/id_ed25519.pub backup@sftp.example.com
+ssh -i ~/.ssh/id_ed25519 backup@sftp.example.com true
+```
+
+After that, set `key: /home/you/.ssh/id_ed25519` in the provider section.
 
 ### Example
 

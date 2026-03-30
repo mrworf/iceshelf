@@ -6,6 +6,7 @@ from modules import aws
 
 class S3Provider(BackupProvider):
     name = 's3'
+    allowed_options = {'type', 'bucket', 'prefix'} | set(aws.PROVIDER_CONFIG_KEYS)
 
     def verify(self):
         self.bucket = self.options.get('bucket')

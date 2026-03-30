@@ -68,6 +68,36 @@ overrides include:
 - Changing the encryption key or prefix.
 - Adding extra exclusion rules.
 
+### Prefix behavior
+
+When a target omits the `prefix` option entirely, the Docker entrypoint uses
+the folder name as the prefix. That is usually the easiest way to back up
+multiple folders into one destination without filename collisions.
+
+If you really want no prefix at all, define `prefix:` explicitly in either the
+baseline or the per-folder config. An explicit blank value is preserved and is
+not replaced by the folder name.
+
+### Shared key files
+
+When several targets use the same GPG or SSH keys, bind them into `/config/`
+once and reference those paths from the baseline or per-folder configs. That
+keeps key material in one place instead of copying it into every backup folder.
+
+Typical examples:
+
+```ini
+[security]
+key file: /config/iceshelf-keys.asc
+
+[provider-remote]
+type: sftp
+host: backup.example.com
+user: backup
+key: /config/id_ed25519
+path: /srv/iceshelf
+```
+
 ### Automatic path management
 
 The entrypoint forces the following paths for every target, regardless of what
@@ -110,6 +140,7 @@ bind-mounted volume for later inspection.
 | `BACKUP_INTERVAL` | `24h` | How often to run a full backup cycle. Accepts a number with an optional suffix: `s` (seconds), `m` (minutes), `h` (hours), `d` (days). Plain digits are treated as seconds. |
 | `BACKUP_START_TIME` | *(unset)* | Optional UTC wall-clock time in `HH:MM` format. When set, the first backup is delayed until this time. Combined with `BACKUP_INTERVAL=24h`, backups run daily at a fixed hour. When omitted, the first backup starts as soon as the container is ready. |
 | `ICESHELF_DUMP_CONFIG` | *(unset)* | Set to `1`, `yes`, or `true` to print the full merged configuration for each target to the container log before running iceshelf. Useful for debugging config merging issues. |
+| `ICESHELF_AUTO_PREFIX` | *(unset)* | Set to `1`, `yes`, or `true` to force the backup file prefix to the folder name (e.g. `/data/photos` produces prefix `photos`) even when the config already defines a prefix. When unset, omitted `prefix` values still auto-prefix, but an explicitly blank `prefix:` is preserved. |
 
 ## Health checking
 
@@ -167,6 +198,8 @@ services:
     volumes:
       # Baseline configuration (read-only)
       - ./my-iceshelf.conf:/config/iceshelf.conf:ro
+      # Shared GPG key file for encrypt/sign (read-only)
+      - ./iceshelf-keys.asc:/config/iceshelf-keys.asc:ro
       # SSH key for SFTP/SCP providers (read-only)
       - ~/.ssh/id_ed25519:/config/id_ed25519:ro
       # Data directories

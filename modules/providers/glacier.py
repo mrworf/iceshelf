@@ -119,6 +119,7 @@ class _UploadJob:
 class GlacierProvider(BackupProvider):
     """Upload archives to AWS Glacier using boto3."""
     name = 'glacier'
+    allowed_options = {'type', 'vault', 'threads'} | set(aws.PROVIDER_CONFIG_KEYS)
 
     def verify(self):
         self.vault = self.options.get('vault')

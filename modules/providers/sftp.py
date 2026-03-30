@@ -37,6 +37,7 @@ def _local_sha256(path, nbytes=None):
 
 class SFTPProvider(BackupProvider):
     name = 'sftp'
+    allowed_options = {'type', 'host', 'port', 'user', 'key', 'password', 'path', 'retries', 'resume', 'verify'}
 
     def verify(self):
         self.host = self.options.get('host')

@@ -5,6 +5,7 @@ from . import BackupProvider, _which
 
 class CopyProvider(BackupProvider):
     name = 'cp'
+    allowed_options = {'type', 'dest', 'create'}
     """Simple provider that copies files locally using cp."""
     def verify(self):
         dest = self.options.get('dest')

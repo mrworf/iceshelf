@@ -26,6 +26,16 @@ AWS_CONFIG_KEYS = (
     "endpoint_url",
 )
 
+PROVIDER_CONFIG_KEYS = (
+    "region",
+    "access key id",
+    "secret access key",
+    "session token",
+    "profile",
+    "endpoint url",
+    "aws config",
+)
+
 _PROVIDER_KEY_MAP = {
     'region': 'region',
     'access key id': 'access_key_id',

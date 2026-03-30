@@ -5,6 +5,7 @@ from . import BackupProvider, _which
 
 class SCPProvider(BackupProvider):
     name = 'scp'
+    allowed_options = {'type', 'user', 'host', 'dest', 'key', 'password'}
     def verify(self):
         self.user = self.options.get('user')
         self.host = self.options.get('host')

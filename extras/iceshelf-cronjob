@@ -1,6 +1,9 @@
 #!/bin/bash
 #
-#
+# Example cron wrapper for iceshelf.
+# Runs a cheap --changes pass first, then performs a real backup only when
+# something changed. Exit code 10 is treated as a successful segmented backup.
+
 SHOWSUCCESS=true
 USER=iceshelf
 CONFS=("/home/${USER}/backup.conf")
@@ -37,11 +40,14 @@ for CONF in "${CONFS[@]}"; do
 		echo -n >$TMPLOG ""
 		sudo -Hu ${USER} ${EXEC} --logfile $TMPLOG $CONF
 		RET=$?
-		if $SHOWSUCCESS && [ $RET -eq 0 ]; then
-			echo "SHOWSUCCESS is TRUE, showing result of successfull run" >&2
+		if $SHOWSUCCESS && [ $RET -eq 0 -o $RET -eq 10 ]; then
+			echo "SHOWSUCCESS is TRUE, showing result of successful run" >&2
 			echo "======================================================" >&2
 			cat $TMPLOG >&2;
 		fi
+	fi
+	if [ $RET -eq 10 ]; then
+		RET=0
 	fi
 	if [ $RET -ne 0 ]; then
 		echo "Backup failed with error code $RET, this is what happened:" >&2

@@ -56,3 +56,12 @@ def get_provider(cfg):
         logging.error('Provider verification failed for %s', t)
         return None
     return provider
+
+
+def get_provider_options(provider_type):
+    if not provider_type:
+        return None
+    cls = PROVIDERS.get(provider_type.lower())
+    if cls is None:
+        return None
+    return getattr(cls, 'allowed_options', None)

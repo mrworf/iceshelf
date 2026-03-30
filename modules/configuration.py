@@ -37,6 +37,100 @@ setting = {
   "key-file" : None
 }
 
+CONFIG_SECTION_DEFAULTS = {
+  "sources": {},
+  "paths": {
+    "prep dir": "backup/inprogress/",
+    "data dir": "backup/metadata/",
+    "done dir": "backup/done/",
+    "prefix": "",
+    "create paths": "no"
+  },
+  "options": {
+    "max size": "0",
+    "delta manifest": "yes",
+    "compress": "yes",
+    "incompressible": "",
+    "persuasive": "no",
+    "detect move": "no",
+    "skip empty": "no",
+    "ignore overlimit": "no",
+    "change method": "sha1",
+    "max keep": "0",
+    "create filelist": "yes",
+    "check update": "no",
+    # Historically documented and still accepted by the parser.
+    "prefix": ""
+  },
+  "custom": {
+    "pre command": "",
+    "post command": ""
+  },
+  "security": {
+    "encrypt": "",
+    "sign": "",
+    "encrypt phrase": "",
+    "sign phrase": "",
+    "add parity": "0",
+    "encrypt manifest": "yes",
+    "key file": ""
+  },
+  "exclude": {}
+}
+
+KNOWN_CONFIG_SECTIONS = set(CONFIG_SECTION_DEFAULTS.keys()) | {'glacier'}
+FLEXIBLE_CONFIG_SECTIONS = {'sources', 'exclude'}
+AWS_PROVIDER_OPTIONS = {
+  'region',
+  'access key id',
+  'secret access key',
+  'session token',
+  'profile',
+  'endpoint url',
+  'aws config',
+}
+PROVIDER_ALLOWED_OPTIONS = {
+  'cp': {'type', 'dest', 'create'},
+  's3': {'type', 'bucket', 'prefix'} | AWS_PROVIDER_OPTIONS,
+  'glacier': {'type', 'vault', 'threads'} | AWS_PROVIDER_OPTIONS,
+  'scp': {'type', 'user', 'host', 'dest', 'key', 'password'},
+  'sftp': {'type', 'host', 'port', 'user', 'key', 'password', 'path', 'retries', 'resume', 'verify'}
+}
+
+
+def _warn_unknown_config_entries(config):
+  for section in config.sections():
+    lowered = section.lower()
+    if lowered.startswith("provider-"):
+      _warn_unknown_provider_options(config, section)
+      continue
+    if lowered not in KNOWN_CONFIG_SECTIONS:
+      logging.warning('Unknown section [%s]', section)
+      continue
+    if lowered in FLEXIBLE_CONFIG_SECTIONS or lowered == 'glacier':
+      continue
+
+    allowed_options = set(CONFIG_SECTION_DEFAULTS.get(lowered, {}).keys())
+    for option in config.options(section):
+      if option not in allowed_options:
+        logging.warning('Unknown option "%s" in [%s]', option, section)
+
+
+def _warn_unknown_provider_options(config, section):
+  provider_cfg = {k: v for k, v in config.items(section)}
+  provider_type = provider_cfg.get('type')
+  if not provider_type:
+    return
+
+  allowed_options = PROVIDER_ALLOWED_OPTIONS.get(provider_type.lower())
+  if allowed_options is None:
+    return
+
+  for option in provider_cfg:
+    if option not in allowed_options:
+      logging.warning('Unknown option "%s" in [%s] for provider type "%s"',
+                      option, section, provider_type)
+
 def getVersion():
   return [1,1,0]
 
@@ -57,51 +151,13 @@ def isCompatible(version):
 def parse(filename, onlysecurity=False):
   config = configparser.ConfigParser()
 
-  # Some sane defaults
-  sections = {
-    "sources": {},
-    "paths": {
-      "prep dir": "backup/inprogress/",
-      "data dir": "backup/metadata/",
-      "done dir": "backup/done/",
-      "prefix": "",
-      "create paths": "no"
-    },
-    "options": {
-      "max size": "0",
-      "delta manifest": "yes",
-      "compress": "yes",
-      "incompressible": "",
-      "persuasive": "no",
-      "detect move": "no",
-      "skip empty": "no",
-      "ignore overlimit": "no",
-      "change method": "sha1",
-      "max keep": "0",
-      "create filelist": "yes",
-      "check update": "no"
-    },
-    "custom": {
-      "pre command": "",
-      "post command": ""
-    },
-    "security": {
-      "encrypt": "",
-      "sign": "",
-      "encrypt phrase": "",
-      "sign phrase": "",
-      "add parity": "0",
-      "encrypt manifest": "yes",
-      "key file": ""
-    }
-  }
-
   # Read user settings
   logging.debug('Loading configuration from %s', filename)
   config.read(filename)
+  _warn_unknown_config_entries(config)
 
   # Load the defaults
-  for section, options in sections.items():
+  for section, options in CONFIG_SECTION_DEFAULTS.items():
     if not config.has_section(section):
       config.add_section(section)
     for option, value in options.items():
@@ -111,7 +167,7 @@ def parse(filename, onlysecurity=False):
   # Detect deprecated glacier config
   if config.has_section('glacier'):
     logging.error('The [glacier] section is no longer supported.')
-    logging.error('Please migrate to provider sections. See providers/glacier.md and the wiki for details.')
+    logging.error('Please migrate to provider sections. See PROVIDERS.md and the wiki for details.')
     return None
 
   # Validate the config
@@ -449,4 +505,3 @@ def isExcluded(f):
         logging.debug("Rule \"%s\" matched \"%s\", excluded", ov, f)
         return True
   return False
-

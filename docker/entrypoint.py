@@ -75,11 +75,11 @@ def discover_targets(data_dir):
     return targets
 
 
-def merge_configs(baseline_path, override_path, folder_path, folder_name):
+def merge_configs(baseline_path, override_path, folder_path, folder_name, auto_prefix=False):
     """
     Merge baseline and per-folder configs.
 
-    Returns the path to the written merged config file.
+    Returns (merged_config_path, prefix_was_auto).
     Raises ValueError on validation failures.
     """
     baseline = configparser.ConfigParser()
@@ -121,6 +121,16 @@ def merge_configs(baseline_path, override_path, folder_path, folder_name):
         baseline.add_section("exclude")
     baseline.set("exclude", "_iceshelf_internal", "?.iceshelf/")
 
+    prefix_was_auto = False
+    has_prefix = baseline.has_section("options") and baseline.has_option("options", "prefix")
+    explicit_blank_prefix = has_prefix and baseline.get("options", "prefix") == ""
+
+    if auto_prefix or (not has_prefix and not explicit_blank_prefix):
+        if not baseline.has_section("options"):
+            baseline.add_section("options")
+        baseline.set("options", "prefix", folder_name)
+        prefix_was_auto = True
+
     has_provider = any(s.lower().startswith("provider-") for s in baseline.sections())
     if not has_provider:
         raise ValueError("No [provider-*] section found in merged config -- backup has nowhere to go")
@@ -130,7 +140,7 @@ def merge_configs(baseline_path, override_path, folder_path, folder_name):
     with open(merged_path, "w") as f:
         baseline.write(f)
 
-    return merged_path
+    return merged_path, prefix_was_auto
 
 
 def run_iceshelf(merged_config, folder_path):
@@ -205,6 +215,7 @@ def main():
     interval_raw = os.environ.get("BACKUP_INTERVAL", "24h")
     start_time = os.environ.get("BACKUP_START_TIME", "").strip()
     dump_config = os.environ.get("ICESHELF_DUMP_CONFIG", "").strip().lower() in ("1", "yes", "true")
+    auto_prefix = os.environ.get("ICESHELF_AUTO_PREFIX", "").strip().lower() in ("1", "yes", "true")
 
     try:
         interval = parse_interval(interval_raw)
@@ -218,6 +229,8 @@ def main():
     log.info("  Backup interval : %s (%d seconds)", interval_raw, interval)
     if start_time:
         log.info("  Start time      : %s UTC", start_time)
+    if auto_prefix:
+        log.info("  Auto prefix     : enabled")
     if dump_config:
         log.info("  Dump config     : enabled")
 
@@ -261,11 +274,14 @@ def main():
 
             log.info("=== Processing target: %s (%s) ===", name, folder)
             try:
-                merged = merge_configs(baseline_config, cfg_path, folder, name)
+                merged, prefix_was_auto = merge_configs(baseline_config, cfg_path, folder, name, auto_prefix)
             except ValueError as e:
                 log.error("Config error for %s: %s", name, e)
                 all_ok = False
                 continue
+
+            if prefix_was_auto:
+                log.info("Auto-prefix for %s: \"%s\"", name, name)
 
             if dump_config:
                 log.info("--- Merged config for %s ---", name)
