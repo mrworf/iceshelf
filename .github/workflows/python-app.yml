@@ -39,6 +39,6 @@ jobs:
     - name: Run restore tests
       run: |
         bash extras/testsuite/test_restore.sh
-    #- name: Test with pytest
-    #  run: |
-    #    pytest
+    - name: Run unit tests
+      run: |
+        pytest tests/ -v

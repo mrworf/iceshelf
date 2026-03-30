@@ -204,6 +204,7 @@ def main():
     data_dir = os.environ.get("ICESHELF_DATA_DIR", "/data")
     interval_raw = os.environ.get("BACKUP_INTERVAL", "24h")
     start_time = os.environ.get("BACKUP_START_TIME", "").strip()
+    dump_config = os.environ.get("ICESHELF_DUMP_CONFIG", "").strip().lower() in ("1", "yes", "true")
 
     try:
         interval = parse_interval(interval_raw)
@@ -217,6 +218,8 @@ def main():
     log.info("  Backup interval : %s (%d seconds)", interval_raw, interval)
     if start_time:
         log.info("  Start time      : %s UTC", start_time)
+    if dump_config:
+        log.info("  Dump config     : enabled")
 
     if not os.path.isfile(baseline_config):
         log.error("Baseline config not found: %s", baseline_config)
@@ -263,6 +266,13 @@ def main():
                 log.error("Config error for %s: %s", name, e)
                 all_ok = False
                 continue
+
+            if dump_config:
+                log.info("--- Merged config for %s ---", name)
+                with open(merged) as _f:
+                    for _line in _f:
+                        log.info("  %s", _line.rstrip())
+                log.info("--- End merged config ---")
 
             if not run_iceshelf(merged, folder):
                 all_ok = False

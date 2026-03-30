@@ -109,6 +109,7 @@ bind-mounted volume for later inspection.
 | `ICESHELF_DATA_DIR` | `/data` | Root directory to scan for backup targets (top-level subdirectories with `.iceshelf/config`). |
 | `BACKUP_INTERVAL` | `24h` | How often to run a full backup cycle. Accepts a number with an optional suffix: `s` (seconds), `m` (minutes), `h` (hours), `d` (days). Plain digits are treated as seconds. |
 | `BACKUP_START_TIME` | *(unset)* | Optional UTC wall-clock time in `HH:MM` format. When set, the first backup is delayed until this time. Combined with `BACKUP_INTERVAL=24h`, backups run daily at a fixed hour. When omitted, the first backup starts as soon as the container is ready. |
+| `ICESHELF_DUMP_CONFIG` | *(unset)* | Set to `1`, `yes`, or `true` to print the full merged configuration for each target to the container log before running iceshelf. Useful for debugging config merging issues. |
 
 ## Health checking
 
