@@ -1,4 +1,4 @@
-# iceshelf [![Build Status](https://github.com/mrworf/iceshelf/actions/workflows/python-app.yml/badge.svg)](https://github.com/mrworf/iceshelf/actions/workflows/python-app.yml)
+# iceshelf [![Build Status](https://github.com/mrworf/iceshelf/actions/workflows/python-app.yml/badge.svg)](https://github.com/mrworf/iceshelf/actions/workflows/python-app.yml) [![Docker Image](https://github.com/mrworf/iceshelf/actions/workflows/docker.yml/badge.svg)](https://github.com/mrworf/iceshelf/actions/workflows/docker.yml)
 
 This tool allow you to backup data, it's intended to be used with services that store such data in an immutable state. This means, for backing up data which is changing on a daily basis, this isn't the tool since it would generate a lot of data.
 
@@ -109,6 +109,18 @@ I use this backup tool myself to safely keep a backup of my family's private ema
 If you loose any content as a result of using this tool (directly or indirectly) you cannot hold me responsible for your loss or damage.
 
 There, I said it. Enough with disclaimers now :-)
+
+## Docker
+
+iceshelf is available as a Docker image on the GitHub Container Registry. The
+container automatically discovers backup targets, merges configuration, and runs
+on a configurable schedule with built-in health checking.
+
+```bash
+docker pull ghcr.io/mrworf/iceshelf:latest
+```
+
+See [docker.md](DOCKER.md) for full documentation on running iceshelf in Docker.
 
 ## Requirements
 

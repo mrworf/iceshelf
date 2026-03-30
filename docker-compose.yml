@@ -1,0 +1,31 @@
+# Example docker-compose file for iceshelf.
+#
+# Mount your baseline config to /config/iceshelf.conf and one or more
+# data directories under /data/.  Each data subdirectory that contains
+# a .iceshelf/config file will be picked up as a backup target.
+#
+# To build locally instead of pulling from GHCR, uncomment the "build"
+# line and comment out "image".
+
+services:
+  iceshelf:
+    image: ghcr.io/mrworf/iceshelf:latest
+    # build: .
+    restart: unless-stopped
+    environment:
+      # How often to run the backup cycle (e.g. 30m, 6h, 1d)
+      BACKUP_INTERVAL: "24h"
+      # Optional: delay the first run until this UTC time (HH:MM).
+      # Combined with a 24h interval this pins backups to a daily slot.
+      # BACKUP_START_TIME: "03:00"
+    volumes:
+      # Baseline configuration (read-only)
+      - ./my-iceshelf.conf:/config/iceshelf.conf:ro
+      # Data directories to scan for .iceshelf/config targets
+      - /path/to/data:/data
+    healthcheck:
+      test: ["CMD", "/app/docker/healthcheck.sh"]
+      interval: 60s
+      timeout: 5s
+      start_period: 300s
+      retries: 1
