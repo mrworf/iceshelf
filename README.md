@@ -50,7 +50,9 @@ type: s3
 bucket: mybucket
 ```
 
-Refer to `providers/*.md` for the options available to each provider type.
+Refer to `providers/PROVIDERS.md` for the canonical provider reference. The
+individual files in `providers/*.md` remain available as supplemental notes for
+each provider.
 
 #### Migrating from older versions
 
@@ -358,7 +360,7 @@ What essentially happens is that the "my rules" line is replaced with all the ru
 Providers control where your backups are stored. Create one or more sections with
 names beginning with `provider-`. Each section must define a `type` matching one
 of the built‑in providers (cp, sftp, scp, s3 or glacier) and any additional
-options documented in `providers/*.md`.
+options documented in `providers/PROVIDERS.md`.
 
 Example:
 
