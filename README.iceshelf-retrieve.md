@@ -5,6 +5,12 @@
 cannot be fetched immediately. This helper keeps track of pending retrieval jobs
 and can be re-run until everything is downloaded and verified.
 
+This tool is intended for the legacy Amazon Glacier vault service only. It does
+not retrieve objects stored in Amazon S3 Glacier storage classes such as
+`GLACIER`, `GLACIER_IR`, or `DEEP_ARCHIVE`. For AWS's migration guidance from
+Glacier vaults to S3 storage classes, see:
+https://docs.aws.amazon.com/solutions/latest/data-transfer-from-amazon-s3-glacier-vaults-to-amazon-s3/overview.html
+
 ## Features
 
 - Handles Glacier inventory requests automatically.

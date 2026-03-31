@@ -158,6 +158,7 @@ class GlacierProvider(BackupProvider):
             if not self._upload_one(filepath, prefix, done, total):
                 return False
             done += os.path.getsize(filepath)
+        logging.info('Stored %d file(s) successfully via %s', len(files), self.storage_id())
         return True
 
     def _upload_one(self, filepath, prefix, bytes_done, bytes_total):

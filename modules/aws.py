@@ -99,18 +99,36 @@ def create_session(aws_config):
     return boto3.Session(region_name=region)
 
 
+def validate_aws_config(aws_config):
+    """Validate AWS region and credential source before creating a client."""
+    region = aws_config.get("region")
+    if not region:
+        return "AWS region is required (set 'region' in provider section or aws config file)."
+
+    has_explicit = aws_config.get("access_key_id") and aws_config.get("secret_access_key")
+    if has_explicit or aws_config.get("profile"):
+        return None
+
+    has_env_credentials = (
+        os.environ.get("AWS_ACCESS_KEY_ID") and
+        os.environ.get("AWS_SECRET_ACCESS_KEY")
+    )
+    if has_env_credentials:
+        return None
+
+    return ("AWS credentials required. Set 'access key id' and 'secret access key' "
+            "in the provider section or aws config file, use 'profile', or set "
+            "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the environment.")
+
+
 def create_glacier_client(aws_config):
     """Create a boto3 Glacier client.  Returns (client, None) or (None, error_msg)."""
     region = aws_config.get("region")
     endpoint_url = aws_config.get("endpoint_url")
 
-    if not region:
-        return None, "AWS region is required (set 'region' in provider section or aws config file)."
-
-    has_explicit = aws_config.get("access_key_id") and aws_config.get("secret_access_key")
-    if not has_explicit and not aws_config.get("profile"):
-        return None, ("AWS credentials required. Set 'access key id' and "
-                      "'secret access key' in provider section, or use 'profile'.")
+    err = validate_aws_config(aws_config)
+    if err:
+        return None, err
 
     try:
         session = create_session(aws_config)
@@ -129,13 +147,9 @@ def create_s3_client(aws_config):
     region = aws_config.get("region")
     endpoint_url = aws_config.get("endpoint_url")
 
-    if not region:
-        return None, "AWS region is required (set 'region' in provider section or aws config file)."
-
-    has_explicit = aws_config.get("access_key_id") and aws_config.get("secret_access_key")
-    if not has_explicit and not aws_config.get("profile"):
-        return None, ("AWS credentials required. Set 'access key id' and "
-                      "'secret access key' in provider section, or use 'profile'.")
+    err = validate_aws_config(aws_config)
+    if err:
+        return None, err
 
     try:
         session = create_session(aws_config)

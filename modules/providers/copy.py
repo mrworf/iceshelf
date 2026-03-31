@@ -38,4 +38,5 @@ class CopyProvider(BackupProvider):
             except Exception:
                 logging.exception('Failed to copy %s', f)
                 return False
+        logging.info('Stored %d file(s) successfully via %s', len(files), self.storage_id())
         return True

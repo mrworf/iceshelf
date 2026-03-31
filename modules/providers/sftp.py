@@ -94,6 +94,7 @@ class SFTPProvider(BackupProvider):
                 remote_name = posixpath.join(self.path, os.path.basename(local_path))
                 if not self._upload_with_retries(client, sftp, local_path, remote_name):
                     return False
+            logging.info('Stored %d file(s) successfully via %s', len(files), self.storage_id())
             return True
         except Exception:
             logging.exception('sftp: upload session failed')

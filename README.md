@@ -21,7 +21,7 @@ If used with immutable storage, then it also provides protection against ransomw
 - Signs all files it uploads (tamper detection)
 - Can upload separate PAR2 file for parity correction (allows for a certain amount of bitrot)
 - Supports segmentation of upload (but not of files, yet)
-- Pluggable provider system supporting Glacier, S3, SFTP, SCP and local copy
+- Pluggable provider system supporting legacy Glacier vaults, S3, SFTP, SCP and local copy
   with the ability to upload to multiple destinations in one run
 - Tracks backups locally to help locate the file needed to restore
 - Keeps the exact directory structure of the backed up files
@@ -62,6 +62,16 @@ bucket: mybucket
 
 Refer to [PROVIDERS.md](PROVIDERS.md) for the canonical provider reference.
 
+For new AWS setups, prefer the `s3` provider and set an Amazon S3 storage class
+such as `GLACIER`, `GLACIER_IR`, or `DEEP_ARCHIVE`. AWS documents S3 storage
+class uploads here:
+https://docs.aws.amazon.com/AmazonS3/latest/userguide/sc-howtoset.html
+
+If you currently use the older Amazon Glacier vault service, the `glacier`
+provider remains available as a legacy compatibility path. AWS's migration
+guidance for moving Glacier vault archives into S3 storage classes is here:
+https://docs.aws.amazon.com/solutions/latest/data-transfer-from-amazon-s3-glacier-vaults-to-amazon-s3/overview.html
+
 #### Migrating from older versions
 
 Older configurations used a dedicated `[glacier]` section. This section has been
@@ -76,10 +86,15 @@ threads: 4
 
 Remove the old `[glacier]` section to avoid startup errors.
 
-Due to the need to work well with immutable storage (for example, AWS Glacier), any change to a file will cause it to reupload the same file with the new content. For this reason, this tool isn't recommended to use with data sources which change frequently as it will produce a tremendous amount of data over time.
+Due to the need to work well with immutable storage (for example, Amazon S3
+archival storage classes or the legacy AWS Glacier service), any change to a
+file will cause it to reupload the same file with the new content. For this
+reason, this tool isn't recommended to use with data sources which change
+frequently as it will produce a tremendous amount of data over time.
 
-This is an archiving solution for long-term storage which is what Glacier excels
-at. Also the reason it's called iceshelf. To quote from wikipedia:
+This is an archiving solution for long-term storage which is what cold storage
+on AWS has traditionally excelled at. Also the reason it's called iceshelf. To
+quote from wikipedia:
 
 > An ice shelf is a thick floating platform of ice that forms where a glacier or ice sheet flows down to a coastline and onto the ocean surface
 
@@ -501,7 +516,7 @@ Depending on what happened during the run, iceshelf will return the following ex
 
 # Retrieving backups
 
-To download archives stored in Glacier use the [iceshelf-retrieve](README.iceshelf-retrieve.md) helper. It manages Glacier jobs and verifies files automatically. You can fetch one or more backups, or use `--all` to restore everything directly from the vault inventory.
+To download archives stored in the legacy Amazon Glacier vault service use the [iceshelf-retrieve](README.iceshelf-retrieve.md) helper. It manages Glacier jobs and verifies files automatically. You can fetch one or more backups, or use `--all` to restore everything directly from the vault inventory.
 
 # FAQ
 

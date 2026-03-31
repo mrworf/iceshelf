@@ -38,7 +38,9 @@ profile: iceshelf
 ## Shared AWS options
 
 The `s3` and `glacier` providers both support the same AWS-related options.
-They require `region` plus either explicit credentials or a named `profile`.
+They require `region` plus credentials from one of these sources: explicit
+credentials, a named `profile`, or the `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY` environment variables.
 
 | Option | Required | Purpose |
 | --- | --- | --- |
@@ -59,6 +61,18 @@ secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 session_token: EXAMPLESESSIONTOKEN
 profile: iceshelf
 endpoint_url: https://s3.example.com
+```
+
+When running in Docker, prefer passing AWS credentials through environment
+variables instead of putting them in the config file to reduce exposure. For
+example:
+
+```bash
+docker run \
+  -e AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE \
+  -e AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY \
+  -e AWS_SESSION_TOKEN=optional-temporary-token \
+  ghcr.io/mrworf/iceshelf:latest
 ```
 
 ## `cp` provider
@@ -208,21 +222,31 @@ verify: yes
 ## `s3` provider
 
 Uploads backup files to an Amazon S3 bucket using boto3. This also works with
-S3-compatible services when `endpoint url` is set appropriately.
+S3-compatible services when `endpoint url` is set appropriately. For new AWS
+setups, this is the recommended provider, including when you want archival
+storage through Amazon S3 Glacier storage classes.
 
 ### Options
 
 | Option | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `bucket` | Yes | None | Name of the destination bucket. |
-| `prefix` | No | Empty | Prefix added before uploaded object names inside the bucket. |
+| `storage class` | No | S3 default | Storage class applied to uploaded objects, for example `STANDARD`, `GLACIER`, `GLACIER_IR`, or `DEEP_ARCHIVE`. |
 | Shared AWS options | Yes | Varies | See the shared AWS options above. |
 
 ### Notes
 
 - `region` is required.
-- You must provide either `access key id` and `secret access key`, or `profile`.
+- You must provide either `access key id` and `secret access key`, `profile`,
+  or the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables.
 - `aws config` can hold the shared AWS settings in YAML form.
+- Common spellings such as `glacier`, `glacier_ir`, `deep archive`, and
+  `deep-archive` are normalized to the AWS API values automatically.
+- AWS documents S3 storage class uploads here:
+  https://docs.aws.amazon.com/AmazonS3/latest/userguide/sc-howtoset.html
+- For AWS's migration guidance from the legacy Amazon Glacier vault service to
+  Amazon S3 storage classes, see:
+  https://docs.aws.amazon.com/solutions/latest/data-transfer-from-amazon-s3-glacier-vaults-to-amazon-s3/overview.html
 
 ### Example with explicit credentials
 
@@ -230,7 +254,7 @@ S3-compatible services when `endpoint url` is set appropriately.
 [provider-s3]
 type: s3
 bucket: my-archive-bucket
-prefix: family/photos
+storage class: DEEP_ARCHIVE
 region: us-east-1
 access key id: AKIAIOSFODNN7EXAMPLE
 secret access key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
@@ -242,15 +266,35 @@ secret access key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 [provider-s3-compatible]
 type: s3
 bucket: iceshelf
-prefix: archives
+storage class: GLACIER
 aws config: /etc/iceshelf/aws-s3.yaml
 endpoint url: https://s3.example.com
 ```
 
+### Example with Docker environment credentials
+
+```ini
+[provider-s3]
+type: s3
+bucket: my-archive-bucket
+storage class: DEEP_ARCHIVE
+region: us-east-1
+```
+
+Set these in the container environment:
+
+```bash
+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+AWS_SESSION_TOKEN=optional-temporary-token
+```
+
 ## `glacier` provider
 
-Uploads backup files to an Amazon Glacier vault using boto3 multipart uploads.
-This is optimized for archival storage rather than fast retrieval.
+Uploads backup files to the legacy Amazon Glacier service using Glacier vaults
+and boto3 multipart uploads. This provider exists for older Glacier-vault
+workflows; new AWS setups should prefer the `s3` provider with an archival
+storage class.
 
 ### Options
 
@@ -267,6 +311,11 @@ This is optimized for archival storage rather than fast retrieval.
 - The provider tries to create the vault before uploading.
 - Glacier retrieval is slow and may incur additional cost, so it fits long-term
   archival storage better than routine restores.
+- This provider targets the legacy Amazon Glacier vault service, not Amazon S3
+  Glacier storage classes. If you are starting fresh, use `type: s3` with
+  `storage class: GLACIER`, `GLACIER_IR`, or `DEEP_ARCHIVE`.
+- AWS migration guidance for moving Glacier vault archives to S3 is here:
+  https://docs.aws.amazon.com/solutions/latest/data-transfer-from-amazon-s3-glacier-vaults-to-amazon-s3/overview.html
 
 ### Example with explicit credentials
 

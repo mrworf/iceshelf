@@ -140,7 +140,34 @@ compress = no
 [provider-cloud]
 type = s3
 bucket = backups
+region = us-east-1
+""", caplog=caplog)
+
+        assert parsed is not None
+        assert caplog.text == ""
+
+    def test_warns_for_s3_prefix_option(self, valid_layout, caplog):
+        caplog.set_level(logging.WARNING)
+
+        parsed = _parse(valid_layout, extra_sections="""
+[provider-cloud]
+type = s3
+bucket = backups
 prefix = archives
+region = us-east-1
+""", caplog=caplog)
+
+        assert parsed is not None
+        assert 'Unknown option "prefix" in [provider-cloud] for provider type "s3"' in caplog.text
+
+    def test_does_not_warn_for_s3_storage_class_option(self, valid_layout, caplog):
+        caplog.set_level(logging.WARNING)
+
+        parsed = _parse(valid_layout, extra_sections="""
+[provider-cloud]
+type = s3
+bucket = backups
+storage class = deep_archive
 region = us-east-1
 """, caplog=caplog)
 
