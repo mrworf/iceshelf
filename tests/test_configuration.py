@@ -174,6 +174,34 @@ region = us-east-1
         assert parsed is not None
         assert caplog.text == ""
 
+    def test_does_not_warn_for_s3_create_option(self, valid_layout, caplog):
+        caplog.set_level(logging.WARNING)
+
+        parsed = _parse(valid_layout, extra_sections="""
+[provider-cloud]
+type = s3
+bucket = backups
+create = yes
+region = us-east-1
+""", caplog=caplog)
+
+        assert parsed is not None
+        assert caplog.text == ""
+
+    def test_does_not_warn_for_glacier_create_option(self, valid_layout, caplog):
+        caplog.set_level(logging.WARNING)
+
+        parsed = _parse(valid_layout, extra_sections="""
+[provider-cold]
+type = glacier
+vault = backups
+create = no
+region = us-east-1
+""", caplog=caplog)
+
+        assert parsed is not None
+        assert caplog.text == ""
+
     def test_does_not_warn_for_dynamic_sources_or_exclude_keys(self, valid_layout, caplog):
         caplog.set_level(logging.WARNING)
 

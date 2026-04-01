@@ -5,6 +5,7 @@ import logging
 import time
 import threading
 from queue import Queue, Empty
+from botocore.exceptions import ClientError
 
 from . import BackupProvider
 from modules import aws
@@ -119,13 +120,17 @@ class _UploadJob:
 class GlacierProvider(BackupProvider):
     """Upload archives to AWS Glacier using boto3."""
     name = 'glacier'
-    allowed_options = {'type', 'vault', 'threads'} | set(aws.PROVIDER_CONFIG_KEYS)
+    allowed_options = {'type', 'vault', 'threads', 'create'} | set(aws.PROVIDER_CONFIG_KEYS)
 
     def verify(self):
         self.vault = self.options.get('vault')
         self.threads = int(self.options.get('threads', 4))
+        create = self.options.get('create', 'no').strip().lower()
         if not self.vault:
             logging.error('glacier provider requires "vault"')
+            return False
+        if create not in ('yes', 'no'):
+            logging.error('glacier provider: create must be "yes" or "no"')
             return False
         aws_config = aws.extract_aws_config(self.options)
         client, err = aws.create_glacier_client(aws_config)
@@ -133,6 +138,7 @@ class GlacierProvider(BackupProvider):
             logging.error('glacier provider: %s', err)
             return False
         self.client = client
+        self.create_vault = create == 'yes'
         return True
 
     def storage_id(self):
@@ -142,10 +148,7 @@ class GlacierProvider(BackupProvider):
         return self.vault
 
     def upload_files(self, files):
-        try:
-            self.client.create_vault(vaultName=self.vault)
-        except Exception:
-            logging.exception('Failed to create vault %s', self.vault)
+        if not self._ensure_vault():
             return False
 
         total = sum(os.path.getsize(f) for f in files)
@@ -239,5 +242,52 @@ class GlacierProvider(BackupProvider):
             )
         except Exception:
             logging.exception('Unable to complete upload of %s', name)
+            return False
+        return True
+
+    @staticmethod
+    def _error_code(exc):
+        response = getattr(exc, 'response', None) or {}
+        error = response.get('Error', {})
+        code = error.get('Code')
+        if code is None:
+            return ''
+        return str(code)
+
+    def _vault_exists(self):
+        try:
+            self.client.describe_vault(vaultName=self.vault)
+            return True
+        except ClientError as exc:
+            if self._error_code(exc) == 'ResourceNotFoundException':
+                return False
+            logging.error('glacier provider: unable to check vault %s', self.vault)
+            logging.exception(exc)
+            raise
+        except Exception:
+            logging.exception('glacier provider: unable to check vault %s', self.vault)
+            raise
+
+    def _create_missing_vault(self):
+        try:
+            self.client.create_vault(vaultName=self.vault)
+            return True
+        except Exception:
+            logging.exception('Failed to create vault %s', self.vault)
+            return False
+
+    def _ensure_vault(self):
+        try:
+            if self._vault_exists():
+                return True
+        except Exception:
+            return False
+
+        if not self.create_vault:
+            logging.error('glacier provider: vault %s does not exist and create is disabled',
+                          self.vault)
+            return False
+
+        if not self._create_missing_vault():
             return False
         return True

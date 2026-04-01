@@ -91,8 +91,8 @@ AWS_PROVIDER_OPTIONS = {
 }
 PROVIDER_ALLOWED_OPTIONS = {
   'cp': {'type', 'dest', 'create'},
-  's3': {'type', 'bucket', 'storage class'} | AWS_PROVIDER_OPTIONS,
-  'glacier': {'type', 'vault', 'threads'} | AWS_PROVIDER_OPTIONS,
+  's3': {'type', 'bucket', 'storage class', 'create'} | AWS_PROVIDER_OPTIONS,
+  'glacier': {'type', 'vault', 'threads', 'create'} | AWS_PROVIDER_OPTIONS,
   'scp': {'type', 'user', 'host', 'dest', 'key', 'password'},
   'sftp': {'type', 'host', 'port', 'user', 'key', 'password', 'path', 'retries', 'resume', 'verify'}
 }

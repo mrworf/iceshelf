@@ -231,6 +231,7 @@ storage through Amazon S3 Glacier storage classes.
 | Option | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `bucket` | Yes | None | Name of the destination bucket. |
+| `create` | No | `no` | Create the bucket automatically if it does not already exist. Accepts `yes` or `no`. |
 | `storage class` | No | S3 default | Storage class applied to uploaded objects, for example `STANDARD`, `GLACIER`, `GLACIER_IR`, or `DEEP_ARCHIVE`. |
 | Shared AWS options | Yes | Varies | See the shared AWS options above. |
 
@@ -240,6 +241,8 @@ storage through Amazon S3 Glacier storage classes.
 - You must provide either `access key id` and `secret access key`, `profile`,
   or the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables.
 - `aws config` can hold the shared AWS settings in YAML form.
+- If the bucket is missing, the backup fails unless `create: yes` is set and
+  bucket creation succeeds.
 - Common spellings such as `glacier`, `glacier_ir`, `deep archive`, and
   `deep-archive` are normalized to the AWS API values automatically.
 - AWS documents S3 storage class uploads here:
@@ -301,6 +304,7 @@ storage class.
 | Option | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `vault` | Yes | None | Name of the Glacier vault. |
+| `create` | No | `no` | Create the vault automatically if it does not already exist. Accepts `yes` or `no`. |
 | `threads` | No | `4` | Number of upload worker threads used for multipart uploads. |
 | Shared AWS options | Yes | Varies | See the shared AWS options above. |
 
@@ -308,7 +312,8 @@ storage class.
 
 - `region` is required.
 - You must provide either `access key id` and `secret access key`, or `profile`.
-- The provider tries to create the vault before uploading.
+- If the vault is missing, the backup fails unless `create: yes` is set and
+  vault creation succeeds.
 - Glacier retrieval is slow and may incur additional cost, so it fits long-term
   archival storage better than routine restores.
 - This provider targets the legacy Amazon Glacier vault service, not Amazon S3

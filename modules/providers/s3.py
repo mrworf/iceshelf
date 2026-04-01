@@ -1,12 +1,13 @@
 import os
 import logging
+from botocore.exceptions import ClientError
 from . import BackupProvider
 from modules import aws
 
 
 class S3Provider(BackupProvider):
     name = 's3'
-    allowed_options = {'type', 'bucket', 'storage class'} | set(aws.PROVIDER_CONFIG_KEYS)
+    allowed_options = {'type', 'bucket', 'storage class', 'create'} | set(aws.PROVIDER_CONFIG_KEYS)
     _SUPPORTED_STORAGE_CLASSES = {
         'STANDARD',
         'REDUCED_REDUNDANCY',
@@ -76,6 +77,7 @@ class S3Provider(BackupProvider):
         self.bucket = self.options.get('bucket')
         configured_storage_class = self.options.get('storage class')
         self.storage_class = self.normalize_storage_class(configured_storage_class)
+        create = self.options.get('create', 'no').strip().lower()
         if not self.bucket:
             logging.error('s3 provider requires "bucket"')
             return False
@@ -83,18 +85,25 @@ class S3Provider(BackupProvider):
             logging.error('s3 provider: storage class "%s" is not supported',
                           configured_storage_class)
             return False
+        if create not in ('yes', 'no'):
+            logging.error('s3 provider: create must be "yes" or "no"')
+            return False
         aws_config = aws.extract_aws_config(self.options)
         client, err = aws.create_s3_client(aws_config)
         if err:
             logging.error('s3 provider: %s', err)
             return False
         self.client = client
+        self.create_bucket = create == 'yes'
+        self.region = aws_config.get('region')
         return True
 
     def storage_id(self):
         return f's3:{self.bucket}'
 
     def upload_files(self, files):
+        if not self._ensure_bucket():
+            return False
         for f in files:
             key = os.path.basename(f)
             try:
@@ -106,4 +115,57 @@ class S3Provider(BackupProvider):
                 logging.exception('s3 upload failed for %s', f)
                 return False
         logging.info('Stored %d file(s) successfully via %s', len(files), self.storage_id())
+        return True
+
+    @staticmethod
+    def _error_code(exc):
+        response = getattr(exc, 'response', None) or {}
+        error = response.get('Error', {})
+        code = error.get('Code')
+        if code is None:
+            return ''
+        return str(code)
+
+    def _bucket_exists(self):
+        try:
+            self.client.head_bucket(Bucket=self.bucket)
+            return True
+        except ClientError as exc:
+            code = self._error_code(exc)
+            if code in {'404', 'NoSuchBucket', 'NotFound'}:
+                return False
+            logging.error('s3 provider: unable to check bucket %s', self.bucket)
+            logging.exception(exc)
+            raise
+        except Exception:
+            logging.exception('s3 provider: unable to check bucket %s', self.bucket)
+            raise
+
+    def _create_missing_bucket(self):
+        kwargs = {'Bucket': self.bucket}
+        if self.region and self.region != 'us-east-1':
+            kwargs['CreateBucketConfiguration'] = {
+                'LocationConstraint': self.region,
+            }
+        try:
+            self.client.create_bucket(**kwargs)
+            return True
+        except Exception:
+            logging.exception('s3 provider: failed to create bucket %s', self.bucket)
+            return False
+
+    def _ensure_bucket(self):
+        try:
+            if self._bucket_exists():
+                return True
+        except Exception:
+            return False
+
+        if not self.create_bucket:
+            logging.error('s3 provider: bucket %s does not exist and create is disabled',
+                          self.bucket)
+            return False
+
+        if not self._create_missing_bucket():
+            return False
         return True
