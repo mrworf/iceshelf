@@ -3,7 +3,6 @@
 import configparser
 import os
 import sys
-import tempfile
 
 import pytest
 
@@ -123,6 +122,92 @@ def _write_conf(path, text):
         f.write(text)
 
 
+def _read_cfg(source):
+    cfg = configparser.ConfigParser()
+    if isinstance(source, configparser.ConfigParser):
+        cfg.read_dict({section: dict(source.items(section)) for section in source.sections()})
+    else:
+        cfg.read(source)
+    return cfg
+
+
+# ---------------------------------------------------------------------------
+# env baseline synthesis
+# ---------------------------------------------------------------------------
+
+class TestEnvBaseline:
+    def test_builds_simple_sections(self):
+        cfg = entrypoint._build_env_baseline({
+            "CFG_OPTIONS_MAX_SIZE": "1G",
+            "CFG_OPTIONS_CHANGE_METHOD": "data",
+            "CFG_SECURITY_ENCRYPT": "me@example.com",
+            "CFG_CUSTOM_PRE_COMMAND": "/usr/local/bin/prep",
+        })
+
+        assert cfg.get("options", "max size") == "1G"
+        assert cfg.get("options", "change method") == "data"
+        assert cfg.get("security", "encrypt") == "me@example.com"
+        assert cfg.get("custom", "pre command") == "/usr/local/bin/prep"
+
+    def test_builds_provider_sections(self):
+        cfg = entrypoint._build_env_baseline({
+            "CFG_PROVIDER_LOCAL_TYPE": "cp",
+            "CFG_PROVIDER_LOCAL_DEST": "/backups",
+            "CFG_PROVIDER_S3MAIN_TYPE": "s3",
+            "CFG_PROVIDER_S3MAIN_BUCKET": "mybucket",
+        })
+
+        assert cfg.get("provider-local", "type") == "cp"
+        assert cfg.get("provider-local", "dest") == "/backups"
+        assert cfg.get("provider-s3main", "type") == "s3"
+        assert cfg.get("provider-s3main", "bucket") == "mybucket"
+
+    def test_ignores_malformed_provider_vars(self, caplog):
+        cfg = entrypoint._build_env_baseline({
+            "CFG_PROVIDER": "bad",
+            "CFG_PROVIDER__TYPE": "bad",
+            "CFG_PROVIDER_NAME_": "bad",
+        })
+
+        assert cfg.sections() == []
+        assert "Ignoring malformed provider config env var" in caplog.text
+
+    def test_ignores_unknown_sections(self, caplog):
+        cfg = entrypoint._build_env_baseline({
+            "CFG_FOO_BAR": "baz",
+        })
+
+        assert cfg.sections() == []
+        assert "Ignoring unknown Docker config env var" in caplog.text
+
+    def test_compose_baseline_env_overrides_file(self, tmp_path):
+        baseline = tmp_path / "baseline.conf"
+        _write_conf(
+            baseline,
+            "[options]\ncompress: yes\n[provider-local]\ntype: cp\ndest: /old\n",
+        )
+
+        cfg = entrypoint._compose_baseline_config(str(baseline), {
+            "CFG_OPTIONS_COMPRESS": "no",
+            "CFG_PROVIDER_LOCAL_DEST": "/new",
+        })
+
+        assert cfg.get("options", "compress") == "no"
+        assert cfg.get("provider-local", "dest") == "/new"
+        assert cfg.get("provider-local", "type") == "cp"
+
+    def test_compose_baseline_supports_env_only(self, tmp_path):
+        missing = tmp_path / "missing.conf"
+
+        cfg = entrypoint._compose_baseline_config(str(missing), {
+            "CFG_PROVIDER_LOCAL_TYPE": "cp",
+            "CFG_PROVIDER_LOCAL_DEST": "/backups",
+        })
+
+        assert cfg.get("provider-local", "type") == "cp"
+        assert cfg.get("provider-local", "dest") == "/backups"
+
+
 # ---------------------------------------------------------------------------
 # merge_configs
 # ---------------------------------------------------------------------------
@@ -147,9 +232,7 @@ class TestMergeConfigs:
         }
 
     def _read_merged(self, path):
-        cfg = configparser.ConfigParser()
-        cfg.read(path)
-        return cfg
+        return _read_cfg(path)
 
     # -- basic merging --
 
@@ -194,6 +277,17 @@ class TestMergeConfigs:
         with pytest.raises(ValueError, match="Per-folder"):
             entrypoint.merge_configs(
                 layout["baseline"], layout["override"], layout["folder"], layout["name"]
+            )
+
+    def test_sources_from_env_baseline_rejected(self, layout):
+        baseline = entrypoint._compose_baseline_config(None, {
+            "CFG_SOURCES_STUFF": "/some/path",
+            "CFG_PROVIDER_LOCAL_TYPE": "cp",
+            "CFG_PROVIDER_LOCAL_DEST": "/x",
+        })
+        with pytest.raises(ValueError, match="Baseline"):
+            entrypoint.merge_configs(
+                baseline, layout["override"], layout["folder"], layout["name"]
             )
 
     # -- auto-generated sources --
@@ -260,6 +354,32 @@ class TestMergeConfigs:
         cfg = self._read_merged(merged)
         assert cfg.has_section("provider-s3")
         assert cfg.get("provider-s3", "type") == "s3"
+
+    def test_provider_from_env_only_baseline(self, layout):
+        baseline = entrypoint._compose_baseline_config(None, {
+            "CFG_PROVIDER_LOCAL_TYPE": "cp",
+            "CFG_PROVIDER_LOCAL_DEST": "/backups",
+        })
+        merged, _ = entrypoint.merge_configs(
+            baseline, layout["override"], layout["folder"], layout["name"]
+        )
+        cfg = self._read_merged(merged)
+        assert cfg.get("provider-local", "type") == "cp"
+        assert cfg.get("provider-local", "dest") == "/backups"
+
+    def test_env_baseline_overrides_file_values(self, layout):
+        _write_conf(layout["baseline"],
+                     "[options]\ncompress: yes\n[provider-local]\ntype: cp\ndest: /old\n")
+        baseline = entrypoint._compose_baseline_config(layout["baseline"], {
+            "CFG_OPTIONS_COMPRESS": "no",
+            "CFG_PROVIDER_LOCAL_DEST": "/new",
+        })
+        merged, _ = entrypoint.merge_configs(
+            baseline, layout["override"], layout["folder"], layout["name"]
+        )
+        cfg = self._read_merged(merged)
+        assert cfg.get("options", "compress") == "no"
+        assert cfg.get("provider-local", "dest") == "/new"
 
     def test_provider_override_replaces_values(self, layout):
         _write_conf(layout["override"],

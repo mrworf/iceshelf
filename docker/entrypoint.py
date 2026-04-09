@@ -24,6 +24,8 @@ log = logging.getLogger("iceshelf-docker")
 
 shutting_down = False
 current_proc = None
+CFG_ENV_PREFIX = "CFG_"
+CFG_SIMPLE_SECTIONS = {"options", "security", "custom", "paths", "sources", "exclude"}
 
 
 def setup_logging():
@@ -75,6 +77,89 @@ def discover_targets(data_dir):
     return targets
 
 
+def _read_config(config_source):
+    """Return a ConfigParser from a file path or an existing parser."""
+    if isinstance(config_source, configparser.ConfigParser):
+        cfg = configparser.ConfigParser()
+        cfg.read_dict({section: dict(config_source.items(section)) for section in config_source.sections()})
+        return cfg
+
+    cfg = configparser.ConfigParser()
+    if config_source:
+        cfg.read(config_source)
+    return cfg
+
+
+def _set_config_value(cfg, section, option, value):
+    if not cfg.has_section(section):
+        cfg.add_section(section)
+    cfg.set(section, option, value)
+
+
+def _build_env_baseline(env=None):
+    """Build a ConfigParser from CFG_* environment variables."""
+    env = env or os.environ
+    cfg = configparser.ConfigParser()
+
+    for key, value in sorted(env.items()):
+        if not key.startswith(CFG_ENV_PREFIX):
+            continue
+
+        remainder = key[len(CFG_ENV_PREFIX):]
+        if not remainder:
+            log.warning("Ignoring malformed config env var %s", key)
+            continue
+
+        parts = remainder.split("_")
+        section_kind = parts[0].lower()
+
+        if section_kind in {"provider", "providers"}:
+            if len(parts) < 3 or not parts[1] or not parts[2]:
+                log.warning("Ignoring malformed provider config env var %s", key)
+                continue
+            provider_name = parts[1].lower()
+            option = " ".join(p.lower() for p in parts[2:] if p)
+            if not option:
+                log.warning("Ignoring malformed provider config env var %s", key)
+                continue
+            _set_config_value(cfg, f"provider-{provider_name}", option, value)
+            continue
+
+        if section_kind not in CFG_SIMPLE_SECTIONS:
+            log.warning("Ignoring unknown Docker config env var %s", key)
+            continue
+
+        if len(parts) < 2:
+            log.warning("Ignoring malformed config env var %s", key)
+            continue
+
+        option = " ".join(p.lower() for p in parts[1:] if p)
+        if not option:
+            log.warning("Ignoring malformed config env var %s", key)
+            continue
+
+        _set_config_value(cfg, section_kind, option, value)
+
+    return cfg
+
+
+def _compose_baseline_config(baseline_path, env=None):
+    """Load file baseline when present and overlay Docker env config."""
+    baseline = configparser.ConfigParser()
+
+    if baseline_path and os.path.isfile(baseline_path):
+        baseline.read(baseline_path)
+
+    env_cfg = _build_env_baseline(env=env)
+    for section in env_cfg.sections():
+        if not baseline.has_section(section):
+            baseline.add_section(section)
+        for key, value in env_cfg.items(section):
+            baseline.set(section, key, value)
+
+    return baseline
+
+
 def merge_configs(baseline_path, override_path, folder_path, folder_name, auto_prefix=False):
     """
     Merge baseline and per-folder configs.
@@ -82,8 +167,7 @@ def merge_configs(baseline_path, override_path, folder_path, folder_name, auto_p
     Returns (merged_config_path, prefix_was_auto).
     Raises ValueError on validation failures.
     """
-    baseline = configparser.ConfigParser()
-    baseline.read(baseline_path)
+    baseline = _read_config(baseline_path)
 
     if baseline.has_section("sources") and any(
         baseline.get("sources", k).strip() for k in baseline.options("sources")
@@ -234,12 +318,22 @@ def main():
     if dump_config:
         log.info("  Dump config     : enabled")
 
-    if not os.path.isfile(baseline_config):
-        log.error("Baseline config not found: %s", baseline_config)
-        sys.exit(1)
     if not os.path.isdir(data_dir):
         log.error("Data directory not found: %s", data_dir)
         sys.exit(1)
+
+    baseline_cfg = _compose_baseline_config(baseline_config)
+    has_env_baseline = any(k.startswith(CFG_ENV_PREFIX) for k in os.environ)
+
+    if not os.path.isfile(baseline_config):
+        if has_env_baseline:
+            log.info("  Baseline source : Docker env only")
+        else:
+            log.error("Baseline config not found: %s", baseline_config)
+            log.error("Provide %s or define CFG_* environment variables", baseline_config)
+            sys.exit(1)
+    elif has_env_baseline:
+        log.info("  Baseline source : file + Docker env overrides")
 
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
@@ -274,7 +368,7 @@ def main():
 
             log.info("=== Processing target: %s (%s) ===", name, folder)
             try:
-                merged, prefix_was_auto = merge_configs(baseline_config, cfg_path, folder, name, auto_prefix)
+                merged, prefix_was_auto = merge_configs(baseline_cfg, cfg_path, folder, name, auto_prefix)
             except ValueError as e:
                 log.error("Config error for %s: %s", name, e)
                 all_ok = False

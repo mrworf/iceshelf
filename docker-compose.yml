@@ -1,8 +1,8 @@
 # Example docker-compose file for iceshelf.
 #
-# Mount your baseline config to /config/iceshelf.conf and one or more
-# data directories under /data/.  Each data subdirectory that contains
-# a .iceshelf/config file will be picked up as a backup target.
+# Configure the Docker baseline with CFG_* environment variables and mount
+# one or more data directories under /data/. Each data subdirectory that
+# contains a .iceshelf/config file will be picked up as a backup target.
 #
 # To build locally instead of pulling from GHCR, uncomment the "build"
 # line and comment out "image".
@@ -18,11 +18,16 @@ services:
       # Optional: delay the first run until this UTC time (HH:MM).
       # Combined with a 24h interval this pins backups to a daily slot.
       # BACKUP_START_TIME: "03:00"
+      # Baseline config via environment variables.
+      CFG_OPTIONS_MAX_SIZE: "50G"
+      CFG_OPTIONS_COMPRESS: "yes"
+      CFG_PROVIDER_LOCAL_TYPE: "cp"
+      CFG_PROVIDER_LOCAL_DEST: "/backups"
     volumes:
-      # Baseline configuration (read-only)
-      - ./my-iceshelf.conf:/config/iceshelf.conf:ro
       # Data directories to scan for .iceshelf/config targets
       - /path/to/data:/data
+      # Example local backup destination for the cp provider
+      - /path/to/backups:/backups
     healthcheck:
       test: ["CMD", "/app/docker/healthcheck.sh"]
       interval: 60s

@@ -1,8 +1,9 @@
 # Running iceshelf in Docker
 
 iceshelf ships a Docker image that automatically discovers, configures, and runs
-backups on a repeating schedule. You provide a **baseline configuration** and
-bind-mount one or more **data directories**. Any folder that contains a
+backups on a repeating schedule. You can provide a **baseline configuration**
+either as a mounted INI file or directly through Docker environment variables,
+then bind-mount one or more **data directories**. Any folder that contains a
 `.iceshelf/config` file is picked up as a backup target.
 
 ## Quick start
@@ -16,9 +17,13 @@ services:
     environment:
       BACKUP_INTERVAL: "24h"
       BACKUP_START_TIME: "03:00"
+      CFG_OPTIONS_MAX_SIZE: "50G"
+      CFG_OPTIONS_COMPRESS: "yes"
+      CFG_PROVIDER_LOCAL_TYPE: "cp"
+      CFG_PROVIDER_LOCAL_DEST: "/backups"
     volumes:
-      - ./my-iceshelf.conf:/config/iceshelf.conf:ro
       - /srv/data:/data
+      - /srv/backups:/backups
 ```
 
 ```
@@ -44,12 +49,44 @@ on every cycle: one for `documents` and one for `photos`.
 The baseline config is a standard iceshelf INI file mounted at
 `/config/iceshelf.conf` (configurable via `ICESHELF_CONFIG`). It sets defaults
 that apply to **all** backup targets: providers, security, options, exclusion
-rules, etc.
+rules, etc. Docker can also synthesize this baseline from `CFG_*` environment
+variables.
 
 There is one restriction: **the `[sources]` section must not be defined** in
 the baseline. Sources are generated automatically from the discovered folders.
 
 A sample baseline is included at `docker/baseline.sample.conf`.
+
+#### Baseline from environment variables
+
+Docker-specific env vars use this naming scheme:
+
+- `CFG_OPTIONS_MAX_SIZE` -> `[options] max size`
+- `CFG_OPTIONS_CHANGE_METHOD` -> `[options] change method`
+- `CFG_SECURITY_ENCRYPT` -> `[security] encrypt`
+- `CFG_CUSTOM_PRE_COMMAND` -> `[custom] pre command`
+- `CFG_PROVIDER_LOCAL_TYPE` -> `[provider-local] type`
+- `CFG_PROVIDER_LOCAL_DEST` -> `[provider-local] dest`
+
+Rules:
+
+- `CFG_<section>_<option>` maps to simple sections such as `options`, `security`, and `custom`.
+- `CFG_PROVIDER_<name>_<option>` maps to provider sections named `[provider-<name>]`.
+- Env names are case-insensitive in effect; generated sections and options are lowercased.
+- Remaining underscores become spaces in the generated option name.
+- Malformed or unknown `CFG_*` names are ignored with a warning in the container log.
+
+Precedence:
+
+- If `ICESHELF_CONFIG` exists, it is loaded first.
+- Any `CFG_*` values then override matching keys from the file baseline.
+- Per-folder `.iceshelf/config` files still override the merged baseline as before.
+
+Limitations:
+
+- `CFG_*` does not support defining `[sources]`; the entrypoint still generates sources from discovered folders only.
+- Ordered user-defined `[exclude]` rules are not a good fit for flat env vars and are best kept in mounted or per-folder config files.
+- Per-folder `.iceshelf/config` remains the right place for target-specific overrides that do not fit well in env vars.
 
 ### Per-folder configuration
 
@@ -141,6 +178,7 @@ bind-mounted volume for later inspection.
 | `BACKUP_START_TIME` | *(unset)* | Optional UTC wall-clock time in `HH:MM` format. When set, the first backup is delayed until this time. Combined with `BACKUP_INTERVAL=24h`, backups run daily at a fixed hour. When omitted, the first backup starts as soon as the container is ready. |
 | `ICESHELF_DUMP_CONFIG` | *(unset)* | Set to `1`, `yes`, or `true` to print the full merged configuration for each target to the container log before running iceshelf. Useful for debugging config merging issues. |
 | `ICESHELF_AUTO_PREFIX` | *(unset)* | Set to `1`, `yes`, or `true` to force the backup file prefix to the folder name (e.g. `/data/photos` produces prefix `photos`) even when the config already defines a prefix. When unset, omitted `prefix` values still auto-prefix, but an explicitly blank `prefix:` is preserved. |
+| `CFG_*` | *(unset)* | Docker-only baseline config override namespace. Example: `CFG_OPTIONS_MAX_SIZE`, `CFG_SECURITY_KEY_FILE`, `CFG_PROVIDER_LOCAL_DEST`. |
 
 ## Health checking
 
@@ -195,13 +233,17 @@ services:
     environment:
       BACKUP_INTERVAL: "24h"
       BACKUP_START_TIME: "03:00"
+      CFG_OPTIONS_MAX_SIZE: "50G"
+      CFG_OPTIONS_COMPRESS: "yes"
+      CFG_OPTIONS_CHANGE_METHOD: "data"
+      CFG_SECURITY_KEY_FILE: "/config/iceshelf-keys.asc"
+      CFG_PROVIDER_ARCHIVE_TYPE: "s3"
+      CFG_PROVIDER_ARCHIVE_BUCKET: "mybucket"
+      CFG_PROVIDER_ARCHIVE_REGION: "us-east-1"
+      CFG_PROVIDER_ARCHIVE_STORAGE_CLASS: "DEEP_ARCHIVE"
     volumes:
-      # Baseline configuration (read-only)
-      - ./my-iceshelf.conf:/config/iceshelf.conf:ro
       # Shared GPG key file for encrypt/sign (read-only)
       - ./iceshelf-keys.asc:/config/iceshelf-keys.asc:ro
-      # SSH key for SFTP/SCP providers (read-only)
-      - ~/.ssh/id_ed25519:/config/id_ed25519:ro
       # Data directories
       - /srv/documents:/data/documents
       - /srv/photos:/data/photos
