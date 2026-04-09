@@ -19,6 +19,7 @@ services:
       BACKUP_START_TIME: "03:00"
       CFG_OPTIONS_MAX_SIZE: "50G"
       CFG_OPTIONS_COMPRESS: "yes"
+      CFG_OPTIONS_SKIP_BROKEN_LINKS: "yes"
       CFG_PROVIDER_LOCAL_TYPE: "cp"
       CFG_PROVIDER_LOCAL_DEST: "/backups"
     volumes:
@@ -63,6 +64,7 @@ Docker-specific env vars use this naming scheme:
 
 - `CFG_OPTIONS_MAX_SIZE` -> `[options] max size`
 - `CFG_OPTIONS_CHANGE_METHOD` -> `[options] change method`
+- `CFG_OPTIONS_SKIP_BROKEN_LINKS` -> `[options] skip broken links`
 - `CFG_SECURITY_ENCRYPT` -> `[security] encrypt`
 - `CFG_CUSTOM_PRE_COMMAND` -> `[custom] pre command`
 - `CFG_PROVIDER_LOCAL_TYPE` -> `[provider-local] type`
@@ -87,6 +89,8 @@ Limitations:
 - `CFG_*` does not support defining `[sources]`; the entrypoint still generates sources from discovered folders only.
 - Ordered user-defined `[exclude]` rules are not a good fit for flat env vars and are best kept in mounted or per-folder config files.
 - Per-folder `.iceshelf/config` remains the right place for target-specific overrides that do not fit well in env vars.
+
+For example, `CFG_OPTIONS_SKIP_BROKEN_LINKS=yes` makes the container warn and continue when it encounters a dangling symlink during scanning. Valid symlinks are still followed normally.
 
 ### Per-folder configuration
 
@@ -236,6 +240,7 @@ services:
       CFG_OPTIONS_MAX_SIZE: "50G"
       CFG_OPTIONS_COMPRESS: "yes"
       CFG_OPTIONS_CHANGE_METHOD: "data"
+      CFG_OPTIONS_SKIP_BROKEN_LINKS: "yes"
       CFG_SECURITY_KEY_FILE: "/config/iceshelf-keys.asc"
       CFG_PROVIDER_ARCHIVE_TYPE: "s3"
       CFG_PROVIDER_ARCHIVE_BUCKET: "mybucket"

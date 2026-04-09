@@ -305,6 +305,14 @@ It's a very new feature and should be used with caution. It will track what back
 
 *default is `no`*
 
+#### skip broken links
+
+If `yes`, iceshelf will log a warning and skip symbolic links whose targets do not exist at scan time.
+
+This applies only to broken symlinks. Other file access problems still fail the run. Valid symbolic links are still followed and backed up as usual.
+
+*default is `no`*
+
 #### create filelist
 
 Adds an additional file, called `filelist.txt` which is a shasum compatible file which details the hash of each file in the backup (the produced backup files, not the backed up files) as well as their corresponding sha1 which can be checked with shasum, like so `shasum -c filelist.txt`. This is to tell you what files belong to the backup. It's used by iceshelf-restore. File will also be signed if signature is enabled (see security).

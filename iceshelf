@@ -317,9 +317,38 @@ def willCompress(filename):
   (ignore, ext) = os.path.splitext(filename)
   return ext[1:].lower() not in incompressable
 
+class SourceCollectionError(Exception):
+  """Fatal error while scanning sources."""
+
+def _broken_symlink_target(filename):
+  try:
+    return os.readlink(filename)
+  except OSError:
+    return None
+
+def _handle_stat_failure(filename, err):
+  if os.path.islink(filename) and not os.path.exists(filename):
+    target = _broken_symlink_target(filename)
+    target_msg = ""
+    if target is not None:
+      target_msg = " (target: %s)" % target
+    msg = "Broken symbolic link \"%s\" cannot be backed up%s" % (filename, target_msg)
+    if config["skip-broken-links"]:
+      logging.warning("%s, skipping", msg)
+      return None
+    logging.error("%s", msg)
+    raise SourceCollectionError(msg) from err
+
+  msg = "Unable to inspect \"%s\": %s" % (filename, err)
+  logging.error("%s", msg)
+  raise SourceCollectionError(msg) from err
+
 def collectFile(filename):
   chksum = ""
-  info = os.stat(filename)
+  try:
+    info = os.stat(filename)
+  except OSError as err:
+    return _handle_stat_failure(filename, err)
   maxsize = config["maxsize"]
 
   if maxsize > 0 and info.st_size > maxsize:
@@ -368,7 +397,10 @@ def collectSources(sources):
             filename = os.path.join(root, f)
 
             if filename is not None:
-              if not collectFile(filename):
+              collect_result = collectFile(filename)
+              if collect_result is None:
+                continue
+              if not collect_result:
                 result['files'].append(filename)
                 result['size'] += os.path.getsize(path)
                 if not config["persuasive"] and not cmdline.changes:
@@ -569,7 +601,10 @@ except OSError as e:
 fileutils.deleteTree(config["prepdir"])
 
 logging.info("Checking sources for changes")
-missedFiles = collectSources(config['sources'])
+try:
+  missedFiles = collectSources(config['sources'])
+except SourceCollectionError:
+  sys.exit(1)
 
 logging.debug("Processing file structure changes")
 

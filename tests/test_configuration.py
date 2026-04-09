@@ -136,6 +136,7 @@ bukcet = typo
         parsed = _parse(valid_layout, extra_sections="""
 [options]
 compress = no
+skip broken links = yes
 
 [provider-cloud]
 type = s3
@@ -257,3 +258,34 @@ bucket = backups
 
         assert parsed is None
         assert 'Provider section provider-cloud must contain a type option' in caplog.text
+
+    def test_skip_broken_links_invalid_value_fails(self, valid_layout, caplog):
+        caplog.set_level(logging.ERROR)
+
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+skip broken links = maybe
+""", caplog=caplog)
+
+        assert parsed is None
+        assert "skip broken links has to be yes/no" in caplog.text
+
+
+class TestParseOptions:
+    def test_skip_broken_links_yes_parses_true(self, valid_layout):
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+skip broken links = yes
+""")
+
+        assert parsed is not None
+        assert parsed["skip-broken-links"] is True
+
+    def test_skip_broken_links_no_parses_false(self, valid_layout):
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+skip broken links = no
+""")
+
+        assert parsed is not None
+        assert parsed["skip-broken-links"] is False

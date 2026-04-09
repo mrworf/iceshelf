@@ -29,6 +29,7 @@ setting = {
   "detect-move": False,
   "create-paths": False,
   "skip-empty": False,
+  "skip-broken-links": False,
   "encrypt-manifest" : True,
   "create-filelist" : True,
   "checkupdate" : False,
@@ -54,6 +55,7 @@ CONFIG_SECTION_DEFAULTS = {
     "persuasive": "no",
     "detect move": "no",
     "skip empty": "no",
+    "skip broken links": "no",
     "ignore overlimit": "no",
     "change method": "sha1",
     "max keep": "0",
@@ -238,6 +240,12 @@ def parse(filename, onlysecurity=False):
     return None
   elif config.get("options", "skip empty").lower() == "yes":
     setting["skip-empty"] = True
+
+  if config.get("options", "skip broken links").lower() not in ["yes", "no"]:
+    logging.error("skip broken links has to be yes/no")
+    return None
+  elif config.get("options", "skip broken links").lower() == "yes":
+    setting["skip-broken-links"] = True
 
   if config.get("options", "change method").lower() not in [ "data", "sha1", "sha256", "sha512"]:
     logging.error("Change method has to be data, sha1, sha256 or sha512 (meta is deprecated)")
