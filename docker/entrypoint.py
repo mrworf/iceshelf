@@ -338,6 +338,10 @@ def main():
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
 
+    # Report healthy during startup and while a backup cycle is in progress.
+    # Health only flips unhealthy after an actual cycle failure.
+    set_healthy(True)
+
     if start_time:
         try:
             wait = seconds_until(start_time)
@@ -395,7 +399,7 @@ def main():
                 elapsed, interval,
             )
 
-        set_healthy(all_ok and not overran)
+        set_healthy(all_ok)
 
         if shutting_down:
             break

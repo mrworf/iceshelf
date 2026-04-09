@@ -3,6 +3,7 @@
 import configparser
 import os
 import sys
+from collections import deque
 
 import pytest
 
@@ -511,3 +512,187 @@ class TestSetHealthy:
     def test_set_unhealthy_when_missing_no_error(self):
         entrypoint.set_healthy(False)
         assert not os.path.exists(self.health_file)
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+class TestMainHealthBehavior:
+    @pytest.fixture(autouse=True)
+    def _reset_globals(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(entrypoint, "shutting_down", False)
+        monkeypatch.setattr(entrypoint, "current_proc", None)
+        monkeypatch.setattr(entrypoint.signal, "signal", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(entrypoint, "setup_logging", lambda: None)
+        monkeypatch.setattr(entrypoint.os.path, "isdir", lambda _path: True)
+        monkeypatch.setattr(entrypoint.os.path, "isfile", lambda _path: True)
+        monkeypatch.setattr(
+            entrypoint,
+            "_compose_baseline_config",
+            lambda *_args, **_kwargs: configparser.ConfigParser(),
+        )
+        self.health_states = []
+        monkeypatch.setattr(entrypoint, "set_healthy", lambda healthy: self.health_states.append(healthy))
+
+    def _configure_env(self, monkeypatch, **env):
+        values = {
+            "ICESHELF_CONFIG": "/config/iceshelf.conf",
+            "ICESHELF_DATA_DIR": "/data",
+            "BACKUP_INTERVAL": "10s",
+        }
+        values.update(env)
+        for key, value in values.items():
+            monkeypatch.setenv(key, value)
+
+    def test_startup_marks_healthy_before_any_backup_finishes(self, monkeypatch):
+        self._configure_env(monkeypatch)
+        monkeypatch.setattr(entrypoint, "discover_targets", lambda _data_dir: [])
+        monkeypatch.setattr(entrypoint, "run_iceshelf", lambda *_args, **_kwargs: True)
+        monotonic_values = deque([0.0, 1.0, 2.0])
+        monkeypatch.setattr(entrypoint.time, "monotonic", lambda: monotonic_values.popleft())
+
+        def fake_sleep(_seconds):
+            entrypoint.shutting_down = True
+
+        monkeypatch.setattr(entrypoint, "interruptible_sleep", fake_sleep)
+
+        entrypoint.main()
+
+        assert self.health_states == [True, True]
+
+    def test_waiting_for_start_time_remains_healthy(self, monkeypatch):
+        self._configure_env(monkeypatch, BACKUP_START_TIME="03:00")
+        monkeypatch.setattr(entrypoint, "seconds_until", lambda _value: 30)
+        monkeypatch.setattr(entrypoint, "discover_targets", lambda _data_dir: [])
+        monkeypatch.setattr(entrypoint.time, "monotonic", lambda: 0.0)
+
+        sleep_calls = []
+
+        def fake_sleep(seconds):
+            sleep_calls.append(seconds)
+            if len(sleep_calls) == 2:
+                entrypoint.shutting_down = True
+
+        monkeypatch.setattr(entrypoint, "interruptible_sleep", fake_sleep)
+
+        entrypoint.main()
+
+        assert sleep_calls[0] == 30
+        assert self.health_states == [True, True]
+
+    def test_first_long_cycle_stays_healthy_when_successful(self, monkeypatch):
+        self._configure_env(monkeypatch, BACKUP_INTERVAL="5s")
+        discover_calls = {"count": 0}
+
+        def fake_discover(_data_dir):
+            discover_calls["count"] += 1
+            if discover_calls["count"] > 1:
+                entrypoint.shutting_down = True
+                return []
+            return [("photos", "/data/photos", "/data/photos/.iceshelf/config")]
+
+        monkeypatch.setattr(entrypoint, "discover_targets", fake_discover)
+        monkeypatch.setattr(entrypoint, "merge_configs", lambda *_args, **_kwargs: ("/tmp/merged.conf", False))
+        monkeypatch.setattr(entrypoint, "run_iceshelf", lambda *_args, **_kwargs: True)
+        monotonic_values = deque([0.0, 7.0, 8.0, 9.0, 10.0, 11.0])
+        monkeypatch.setattr(entrypoint.time, "monotonic", lambda: monotonic_values.popleft())
+        monkeypatch.setattr(entrypoint, "interruptible_sleep", lambda _seconds: None)
+
+        entrypoint.main()
+
+        assert self.health_states == [True, True, True]
+
+    def test_later_long_successful_cycle_stays_healthy(self, monkeypatch):
+        self._configure_env(monkeypatch, BACKUP_INTERVAL="5s")
+        discover_calls = {"count": 0}
+
+        def fake_discover(_data_dir):
+            discover_calls["count"] += 1
+            if discover_calls["count"] > 2:
+                entrypoint.shutting_down = True
+                return []
+            return [("photos", "/data/photos", "/data/photos/.iceshelf/config")]
+
+        monkeypatch.setattr(entrypoint, "discover_targets", fake_discover)
+        monkeypatch.setattr(entrypoint, "merge_configs", lambda *_args, **_kwargs: ("/tmp/merged.conf", False))
+        monkeypatch.setattr(entrypoint, "run_iceshelf", lambda *_args, **_kwargs: True)
+        monotonic_values = deque([0.0, 7.0, 7.0, 8.0, 12.0, 20.0, 21.0, 22.0, 23.0, 24.0])
+        monkeypatch.setattr(entrypoint.time, "monotonic", lambda: monotonic_values.popleft())
+        monkeypatch.setattr(entrypoint, "interruptible_sleep", lambda _seconds: None)
+
+        entrypoint.main()
+
+        assert self.health_states == [True, True, True, True]
+
+    def test_target_failure_marks_unhealthy(self, monkeypatch):
+        self._configure_env(monkeypatch)
+        monkeypatch.setattr(
+            entrypoint,
+            "discover_targets",
+            lambda _data_dir: [("photos", "/data/photos", "/data/photos/.iceshelf/config")],
+        )
+        monkeypatch.setattr(entrypoint, "merge_configs", lambda *_args, **_kwargs: ("/tmp/merged.conf", False))
+        monkeypatch.setattr(entrypoint, "run_iceshelf", lambda *_args, **_kwargs: False)
+        monotonic_values = deque([0.0, 1.0, 2.0])
+        monkeypatch.setattr(entrypoint.time, "monotonic", lambda: monotonic_values.popleft())
+
+        def fake_sleep(_seconds):
+            entrypoint.shutting_down = True
+
+        monkeypatch.setattr(entrypoint, "interruptible_sleep", fake_sleep)
+
+        entrypoint.main()
+
+        assert self.health_states == [True, False]
+
+    def test_config_error_marks_unhealthy(self, monkeypatch):
+        self._configure_env(monkeypatch)
+        monkeypatch.setattr(
+            entrypoint,
+            "discover_targets",
+            lambda _data_dir: [("photos", "/data/photos", "/data/photos/.iceshelf/config")],
+        )
+
+        def raise_config_error(*_args, **_kwargs):
+            raise ValueError("bad config")
+
+        monkeypatch.setattr(entrypoint, "merge_configs", raise_config_error)
+        monotonic_values = deque([0.0, 1.0, 2.0])
+        monkeypatch.setattr(entrypoint.time, "monotonic", lambda: monotonic_values.popleft())
+
+        def fake_sleep(_seconds):
+            entrypoint.shutting_down = True
+
+        monkeypatch.setattr(entrypoint, "interruptible_sleep", fake_sleep)
+
+        entrypoint.main()
+
+        assert self.health_states == [True, False]
+
+    def test_later_success_restores_health_after_failure(self, monkeypatch):
+        self._configure_env(monkeypatch)
+        runs = deque([
+            [("photos", "/data/photos", "/data/photos/.iceshelf/config")],
+            [("photos", "/data/photos", "/data/photos/.iceshelf/config")],
+        ])
+        outcomes = deque([False, True])
+        monkeypatch.setattr(entrypoint, "discover_targets", lambda _data_dir: runs.popleft())
+        monkeypatch.setattr(entrypoint, "merge_configs", lambda *_args, **_kwargs: ("/tmp/merged.conf", False))
+        monkeypatch.setattr(entrypoint, "run_iceshelf", lambda *_args, **_kwargs: outcomes.popleft())
+        monotonic_values = deque([0.0, 1.0, 2.0, 10.0, 11.0, 12.0])
+        monkeypatch.setattr(entrypoint.time, "monotonic", lambda: monotonic_values.popleft())
+
+        sleep_calls = []
+
+        def fake_sleep(_seconds):
+            sleep_calls.append(True)
+            if len(sleep_calls) == 1:
+                return
+            entrypoint.shutting_down = True
+
+        monkeypatch.setattr(entrypoint, "interruptible_sleep", fake_sleep)
+
+        entrypoint.main()
+
+        assert self.health_states == [True, False, True]

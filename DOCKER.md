@@ -188,15 +188,18 @@ bind-mounted volume for later inspection.
 
 The container exposes a Docker `HEALTHCHECK`. The rules are simple:
 
-- The container starts **unhealthy** (before the first run completes).
-- After a backup cycle finishes, the container becomes **healthy** only if
-  **every** target succeeded **and** the run finished before the next scheduled
-  slot.
+- The container starts **healthy**.
+- If `BACKUP_START_TIME` delays the first run, the container stays **healthy**
+  while waiting.
+- While a backup cycle is running, the container remains **healthy** unless the
+  cycle later fails.
+- After a backup cycle finishes, the container is **healthy** if **every**
+  target succeeded.
 - If **any** backup fails, the container goes **unhealthy** until a subsequent
   cycle completes with all targets succeeding.
 - If a cycle takes longer than `BACKUP_INTERVAL` (i.e. the schedule is too
-  aggressive), the overrun is logged and the container goes **unhealthy**. It
-  returns to healthy once a full cycle completes within the interval.
+  aggressive), the overrun is logged, but the container stays **healthy** so
+  long as the cycle itself succeeds.
 
 You can query health with `docker inspect` or let your orchestrator (Compose,
 Swarm, Kubernetes) act on it automatically.
