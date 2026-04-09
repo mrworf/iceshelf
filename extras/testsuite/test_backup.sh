@@ -125,6 +125,14 @@ function lastArchive() {
   echo "done/$T/$TT"
 }
 
+function lastSet() {
+  ls -1rt done/ | tail -1
+}
+
+function backupCount() {
+  ls -1 done/ | wc --lines
+}
+
 # Runs an iceshelf session, first checking if there is any changes.
 # If no changes are found, it fails
 #

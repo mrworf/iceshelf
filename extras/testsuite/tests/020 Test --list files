@@ -1,0 +1,24 @@
+OPT_IGNORECOMP=true
+runTest "Test --list files" \
+  "skip" \
+  '
+function posttest() {
+  if ! echo "$RESULT2" | grep -F "Files in current backup:" >/dev/null; then
+    echo "Missing files list header"
+    return 1
+  fi
+  if ! echo "$RESULT2" | grep -F "\"content/a\"" >/dev/null; then
+    echo "content/a missing from file list"
+    return 1
+  fi
+  if ! echo "$RESULT2" | grep -F "\"content/qqq\"" >/dev/null; then
+    echo "content/qqq missing from file list"
+    return 1
+  fi
+  if echo "$RESULT2" | grep -F "\"content/b\"" >/dev/null; then
+    echo "Deleted content/b unexpectedly present in file list"
+    return 1
+  fi
+}
+  ' \
+  regular "" --list files

@@ -1,0 +1,21 @@
+OPT_IGNORECOMP=true
+runTest "Test --show" \
+  "skip" \
+  '
+function pretest() {
+  lastSet > tmp/test_last_set
+}
+
+function posttest() {
+  TEST_LAST_SET="$(cat tmp/test_last_set)"
+  if ! echo "$RESULT2" | grep -F "Members of \"${TEST_LAST_SET}\":" >/dev/null; then
+    echo "Missing members header for backup set ${TEST_LAST_SET}"
+    return 1
+  fi
+  if ! echo "$RESULT2" | grep -F "${TEST_LAST_SET}.json" >/dev/null; then
+    echo "Expected manifest member missing from --show output"
+    return 1
+  fi
+}
+  ' \
+  regular "" --show "$(lastSet)"

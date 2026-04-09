@@ -1,0 +1,25 @@
+runTest "Test --full" \
+  "nochange" \
+  '
+function pretest() {
+  backupCount > tmp/test_backup_count
+}
+
+function posttest() {
+  TEST_BACKUP_COUNT="$(cat tmp/test_backup_count)"
+  NOW_COUNT="$(backupCount)"
+  if [ "$NOW_COUNT" -ne $((TEST_BACKUP_COUNT + 1)) ]; then
+    echo "Expected one additional backup directory after --full"
+    return 1
+  fi
+  if echo "$RESULT2" | grep -F "No changes detected" >/dev/null; then
+    echo "--full unexpectedly reported no changes"
+    return 1
+  fi
+  if ! echo "$RESULT2" | grep -F "files (" >/dev/null; then
+    echo "Expected normal backup summary missing from --full output"
+    return 1
+  fi
+}
+  ' \
+  regular "" --full

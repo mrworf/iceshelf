@@ -1,0 +1,25 @@
+OPT_IGNORECOMP=true
+runTest "Test --list members" \
+  "skip" \
+  '
+function posttest() {
+  if ! echo "$RESULT2" | grep -F "Backups containing files in current backup:" >/dev/null; then
+    echo "Missing members list header"
+    return 1
+  fi
+  if ! echo "$RESULT2" | grep -F "\"content/qqq\"" >/dev/null; then
+    echo "content/qqq missing from members list"
+    return 1
+  fi
+
+  if echo "$RESULT2" | grep -F "\"content/d\" moved to \"content/dd\"" >/dev/null; then
+    return 0
+  fi
+
+  if ! echo "$RESULT2" | grep -F "\"content/dd\"" >/dev/null; then
+    echo "Neither move information nor content/dd membership found"
+    return 1
+  fi
+}
+  ' \
+  regular "" --list members

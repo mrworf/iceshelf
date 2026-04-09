@@ -1,0 +1,20 @@
+OPT_IGNORECOMP=true
+runTest "Test --modified" \
+  "skip" \
+  '
+function posttest() {
+  if ! echo "$RESULT2" | grep -F "Searching for modified files:" >/dev/null; then
+    echo "Modified header missing"
+    return 1
+  fi
+  if ! echo "$RESULT2" | grep -F "\"content/a\" modified" >/dev/null; then
+    echo "Expected modified entry for content/a missing"
+    return 1
+  fi
+  if ! echo "$RESULT2" | grep -F "Found " >/dev/null; then
+    echo "Modified summary missing"
+    return 1
+  fi
+}
+  ' \
+  regular "" --modified

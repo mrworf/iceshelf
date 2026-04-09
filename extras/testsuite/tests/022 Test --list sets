@@ -1,0 +1,21 @@
+OPT_IGNORECOMP=true
+runTest "Test --list sets" \
+  "skip" \
+  '
+function posttest() {
+  if ! echo "$RESULT2" | grep -F "Needed backup sets to restore complete backup (in this order):" >/dev/null; then
+    echo "Missing sets list header"
+    return 1
+  fi
+
+  if echo "$RESULT2" | grep -F "\"content/d\" moved to \"content/dd\"" >/dev/null; then
+    return 0
+  fi
+
+  if ! echo "$RESULT2" | grep -E "^[0-9]{8}-[0-9]{6}-[0-9a-f]{5}" >/dev/null; then
+    echo "No backup-set reference found in --list sets output"
+    return 1
+  fi
+}
+  ' \
+  regular "" --list sets

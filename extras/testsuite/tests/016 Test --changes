@@ -1,0 +1,29 @@
+# Exercise --changes against an already-backed-up tree and then restore the
+# temporary modification so later informational tests start clean.
+OPT_SUCCESSRET=1
+OPT_IGNORECOMP=true
+runTest "Test --changes" \
+  "skip" \
+  '
+function pretest() {
+  dd if=/dev/urandom of=content/a bs=1024 count=7 conv=notrunc 2>/dev/null
+}
+
+function posttest() {
+  if ! echo "$RESULT2" | grep -F "Detected changes:" >/dev/null; then
+    echo "Missing changes header"
+    return 1
+  fi
+  if ! echo "$RESULT2" | grep -F "\"content/a\" changed" >/dev/null; then
+    echo "Missing changed file entry for content/a"
+    return 1
+  fi
+  if ! echo "$RESULT2" | grep -E "[0-9]+ files .*changed or been added since last backup" >/dev/null; then
+    echo "Missing change summary"
+    return 1
+  fi
+
+  cp compare/content/a content/a
+}
+  ' \
+  regular "" --changes

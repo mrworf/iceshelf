@@ -1,0 +1,20 @@
+OPT_IGNORECOMP=true
+runTest "Test --find" \
+  "skip" \
+  '
+function posttest() {
+  if ! echo "$RESULT2" | grep -F "Searching for \"qqq\"" >/dev/null; then
+    echo "Search header missing"
+    return 1
+  fi
+  if ! echo "$RESULT2" | grep -F "\"content/qqq\", exists in:" >/dev/null; then
+    echo "Expected content/qqq search result missing"
+    return 1
+  fi
+  if ! echo "$RESULT2" | grep -F "Found 1 instances" >/dev/null; then
+    echo "Search count missing or unexpected"
+    return 1
+  fi
+}
+  ' \
+  regular "" --find qqq
