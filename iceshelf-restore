@@ -15,7 +15,6 @@ import argparse
 import json
 import logging
 import os.path
-import re
 import shutil
 import time
 import signal
@@ -26,137 +25,15 @@ import tempfile
 import threading
 from modules import fileutils
 from modules import gpg as gpg_module
-
-# Established patterns from iceshelf backup output (exact filenames only).
-MANIFEST_SUFFIXES = ('.json.gpg.asc', '.json.asc', '.json.gpg', '.json')
-# Prefer most-wrapped first so we never use left-over decrypted intermediates
-ARCHIVE_SUFFIXES = ('.tar.bz2.gpg.sig', '.tar.bz2.gpg', '.tar.bz2', '.tar.gpg.sig', '.tar.gpg', '.tar')
-FILELIST_SUFFIXES = ('.lst.asc', '.lst')
-# PAR2: archive_filename.par2, archive_filename.volN+MM.par2, optional .sig
-PAR2_VOL_PATTERN = re.compile(r'^\.vol\d+\+\d+\.par2(\.sig)?$')
-
-
-def get_manifest_file(basepath, basename):
-    """Return path to manifest file if it exists; check only iceshelf manifest names in order."""
-    for suffix in MANIFEST_SUFFIXES:
-        path = os.path.join(basepath, basename + suffix)
-        if os.path.isfile(path):
-            return path
-    return None
-
-
-def get_archive_file(basepath, basename):
-    """Return path to main archive file if it exists; check only iceshelf archive names in order."""
-    for suffix in ARCHIVE_SUFFIXES:
-        path = os.path.join(basepath, basename + suffix)
-        if os.path.isfile(path):
-            return path
-    return None
-
-
-def get_filelist_file(basepath, basename):
-    """Return path to filelist file if it exists; check only iceshelf filelist names in order."""
-    for suffix in FILELIST_SUFFIXES:
-        path = os.path.join(basepath, basename + suffix)
-        if os.path.isfile(path):
-            return path
-    return None
-
-
-def get_parity_files(basepath, archive_filename):
-    """Return list of paths that are PAR2 files for this archive (exact iceshelf PAR2 naming)."""
-    results = []
-    base_par2 = os.path.join(basepath, archive_filename + '.par2')
-    base_par2_sig = base_par2 + '.sig'
-    if os.path.isfile(base_par2):
-        results.append(base_par2)
-    if os.path.isfile(base_par2_sig):
-        results.append(base_par2_sig)
-    try:
-        for entry in os.listdir(basepath):
-            if not entry.startswith(archive_filename + '.vol'):
-                continue
-            rest = entry[len(archive_filename):]
-            if PAR2_VOL_PATTERN.match(rest):
-                results.append(os.path.join(basepath, entry))
-    except OSError:
-        pass
-    return results
-
-
-def valid_archive(base_dir, list_file_path, corrupt_list, found_files):
-    """
-    Validate files listed in the filelist. list_file_path is the full path to the list file
-    (may be in a temp dir); base_dir is the backup directory for resolving relative paths in the list.
-    """
-    p = re.compile('([a-f0-9]+)\\s+([^\\s]+)')
-    criticalerror = False
-    archivecorrupt = False
-    paritycount = 0
-    del found_files[:]
-    with open(list_file_path, "r", encoding='utf-8') as list_fp:
-        all_lines = list_fp.readlines()
-
-    # First pass: check filelist format, all files exist, and compute total bytes to validate
-    to_validate = []  # list of (checksum, full_path, line)
-    total_bytes = 0
-    for line in all_lines:
-        res = p.match(line)
-        if not res:
-            logging.error("filelist.txt is corrupt")
-            return False
-        full_path = os.path.join(base_dir, res.group(2))
-        if not os.path.exists(full_path):
-            logging.error(
-                'File "%s" is missing from backup',
-                res.group(2))
-            return False
-        total_bytes += os.path.getsize(full_path)
-        to_validate.append((res.group(1), full_path, line))
-
-    bytes_done = 0
-    last_pct = -1
-
-    def progress_callback(file_done, _file_total):
-        nonlocal bytes_done, last_pct
-        pct = (100 * (bytes_done + file_done) // total_bytes) if total_bytes else 100
-        if pct != last_pct:
-            sys.stderr.write('\rValidating archive, %d%% done    ' % pct)
-            sys.stderr.flush()
-            last_pct = pct
-
-    try:
-        for checksum, full_path, line in to_validate:
-            found_files.append(os.path.relpath(full_path, base_dir))
-            sha = fileutils.hashFile(
-                full_path, 'sha1', progress_callback=progress_callback)
-            file_size = os.path.getsize(full_path)
-            bytes_done += file_size
-            if sha != checksum:
-                corrupt_list.append(os.path.relpath(full_path, base_dir))
-                if ".json" in line:
-                    logging.error(
-                        'Manifest is corrupt, please restore manually')
-                    criticalerror = True
-                elif ".tar" in line:
-                    archivecorrupt = True
-                elif ".par2" in line:
-                    logging.warning(
-                        'Parity file "%s" is corrupt and will not be used',
-                        os.path.relpath(full_path, base_dir))
-            elif ".par2" in line:
-                paritycount += 1
-    finally:
-        sys.stderr.write('\n')
-        sys.stderr.flush()
-
-    if archivecorrupt and paritycount == 0:
-        logging.error('Archive is corrupt and no available parity files')
-        criticalerror = True
-    elif archivecorrupt:
-        logging.warning(
-            'Archive is corrupt, but parity is available making repair a possibility')
-    return not criticalerror
+from modules import restoreutils
+MANIFEST_SUFFIXES = restoreutils.MANIFEST_SUFFIXES
+ARCHIVE_SUFFIXES = restoreutils.ARCHIVE_SUFFIXES
+FILELIST_SUFFIXES = restoreutils.FILELIST_SUFFIXES
+get_manifest_file = restoreutils.get_manifest_file
+get_archive_file = restoreutils.get_archive_file
+get_filelist_file = restoreutils.get_filelist_file
+get_parity_files = restoreutils.get_parity_files
+valid_archive = restoreutils.valid_archive
 
 
 def _is_gpg_encrypted(filepath, keyring_dir=None):
@@ -254,6 +131,24 @@ def _gpg_failure_reason(stderr_text):
     if 'decryption failed' in low or 'no secret key' in low:
         return 'decryption failed (wrong passphrase or key not in keyring)'
     return None
+
+
+def _can_attempt_parity_repair(corrupt_files, parity_files):
+    """Return True when the only detected corruption is in the archive/parity set."""
+    if not parity_files or not corrupt_files:
+        return False
+
+    saw_archive = False
+    for path in corrupt_files:
+        if '.json' in path or path.endswith('.lst') or 'filelist.txt' in path:
+            return False
+        if '.tar' in path:
+            saw_archive = True
+            continue
+        if '.par2' in path:
+            continue
+        return False
+    return saw_archive
 
 
 def strip_file(filename, keyring_dir=None, output_path=None, work_dir=None,
@@ -556,7 +451,7 @@ def getBackupFiles(itemFromBackup):
             except OSError:
                 pass
 
-    matched_files = get_files_for_basename(backup_dir, basename) if basename else []
+    matched_files = restoreutils.get_files_for_basename(backup_dir, basename) if basename else []
     for entry in matched_files:
         logging.debug('Found backup file "%s"', entry)
 
@@ -613,23 +508,6 @@ def check_conflict(restore_path, manifest_checksum, conflict_mode):
     return ('proceed', None)
 
 
-def get_files_for_basename(basepath, basename):
-    """Return list of file names in basepath that belong to this backup (established patterns only)."""
-    if not os.path.isdir(basepath):
-        return []
-    files = []
-    manifest_path = get_manifest_file(basepath, basename)
-    if manifest_path:
-        files.append(os.path.basename(manifest_path))
-    archive_path = get_archive_file(basepath, basename)
-    if archive_path:
-        files.append(os.path.basename(archive_path))
-        for p in get_parity_files(basepath, os.path.basename(archive_path)):
-            files.append(os.path.basename(p))
-    filelist_path = get_filelist_file(basepath, basename)
-    if filelist_path:
-        files.append(os.path.basename(filelist_path))
-    return files
 
 
 # Orderings: index 0 = least wrapped, higher = more wrapped (used to detect left-overs)
@@ -1641,10 +1519,7 @@ if cmdline.key_file:
         secure_wipe_temp_dir(temp_keyring_dir)
         sys.exit(1)
     logging.debug('Imported key(s) from %s into ephemeral keyring', key_path)
-    has_public = b'-----BEGIN PGP PUBLIC KEY BLOCK-----' in key_data
-    has_private = (
-        b'-----BEGIN PGP PRIVATE KEY BLOCK-----' in key_data
-        or b'-----BEGIN PGP SECRET KEY BLOCK-----' in key_data)
+    has_public, has_private = gpg_module.gpg_key_capabilities(temp_keyring_dir)
     if not has_public:
         logging.warning(
             'Cannot validate signatures, no public key provided in %s.', key_path)
@@ -1771,14 +1646,14 @@ try:
                 filelist_path = None
             else:
                 if not valid_archive(basepath, stripped_list, corrupt_files, found_files):
-                    if not cmdline.force:
+                    if not cmdline.force and not (cmdline.repair and _can_attempt_parity_repair(corrupt_files, parity_files)):
                         sys.exit(1)
                 filelist_path = stripped_list
     elif os.path.isfile(os.path.join(basepath, 'filelist.txt')):
         logging.warning(
             'Using older "filelist.txt" instead of new format using file ending in ".lst"')
         if not valid_archive(basepath, os.path.join(basepath, 'filelist.txt'), corrupt_files, found_files):
-            if not cmdline.force:
+            if not cmdline.force and not (cmdline.repair and _can_attempt_parity_repair(corrupt_files, parity_files)):
                 sys.exit(1)
 
     logging.info('Validating metadata files')
@@ -1805,15 +1680,31 @@ try:
     if not do_manifest:
         sys.exit(0)
 
+    parity_repair_cleanup = None
     if (cmdline.restore or cmdline.repair) and parity_files and len(corrupt_files) > 0:
-        main_par2 = os.path.join(basepath, file_archive + '.par2')
-        if main_par2 in parity_files and os.path.isfile(main_par2):
-            logging.info('Attempting repair of "%s"', file_archive)
-            if not fileutils.repairParity(main_par2):
-                logging.error(
-                    "Failed to repair file, not enough parity material")
-                sys.exit(1)
-            logging.info('File was repaired successfully')
+        repair_info, repair_err = restoreutils.prepare_parity_for_repair(
+            basepath,
+            file_archive,
+            parity_files,
+            keyring_dir=keyring_dir,
+            work_dir=work_dir,
+            validate_file_fn=validate_file,
+            strip_file_fn=strip_file,
+        )
+        if repair_info is None:
+            logging.error(
+                'Parity is present but could not be prepared for repair: %s',
+                repair_err or 'unknown reason')
+            sys.exit(1)
+
+        parity_repair_cleanup = repair_info['repair_dir']
+        logging.info('Attempting repair of "%s"', file_archive)
+        if not fileutils.repairParity(repair_info['main_par2']):
+            logging.error("Failed to repair file, not enough parity material")
+            sys.exit(1)
+        if parity_repair_cleanup:
+            shutil.copy2(repair_info['archive_path'], os.path.join(basepath, file_archive))
+        logging.info('File was repaired successfully')
 
     # Strip the archive
     if cmdline.restore:
@@ -2123,6 +2014,11 @@ try:
         sys.stderr.flush()
     logging.info("Backup has been restored")
 finally:
+    if 'parity_repair_cleanup' in locals() and parity_repair_cleanup and os.path.isdir(parity_repair_cleanup):
+        try:
+            shutil.rmtree(parity_repair_cleanup)
+        except OSError as exc:
+            logging.warning('Could not remove parity repair dir %s: %s', parity_repair_cleanup, exc)
     if single_backup_cleanup_work and os.path.isdir(single_backup_cleanup_work):
         try:
             shutil.rmtree(single_backup_cleanup_work)

@@ -258,6 +258,30 @@ def gpg_import_and_trust(keyring_dir, key_data_bytes, passphrase=None):
         _cleanup_passphrase_file(passphrase_file)
 
 
+def gpg_key_capabilities(keyring_dir):
+    """Return (has_public, has_private) for the keyring contents."""
+    env = gpg_env(keyring_dir)
+
+    def _has_records(args, prefixes):
+        try:
+            result = subprocess.run(
+                ['gpg', '--no-tty', '--batch'] + args + ['--with-colons'],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        if result.returncode != 0:
+            return False
+        return any(line.startswith(prefixes) for line in (result.stdout or '').splitlines())
+
+    has_public = _has_records(['--list-keys'], ('pub:',))
+    has_private = _has_records(['--list-secret-keys'], ('sec:',))
+    return has_public, has_private
+
+
 def gpg_encrypt_file(input_path, output_path, recipient, keyring_dir=None,
                      passphrase=None, armor=False):
     """Encrypt input_path to output_path for recipient. Return (success, stderr)."""

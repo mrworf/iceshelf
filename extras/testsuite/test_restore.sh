@@ -104,7 +104,7 @@ for VARIANT in "${VARIATIONS[@]}"; do
  incompressible:
  max keep: 0
  detect move: yes
-${EXTRAS}
+$(echo -e "$EXTRAS")
 CONF
 
   # Generate the backup using iceshelf and collect the produced
@@ -125,6 +125,18 @@ CONF
         ;;
     esac
   done
+  if [[ "$VARIANT" == *"parity"* ]]; then
+    PARITY_FILES="$(find "done/$BDIR" -maxdepth 1 -type f \
+      \( -name "$(basename "$ARCHIVE").par2" \
+      -o -name "$(basename "$ARCHIVE").par2.sig" \
+      -o -name "$(basename "$ARCHIVE").vol*.par2" \
+      -o -name "$(basename "$ARCHIVE").vol*.par2.sig" \) | sort)"
+    if [ -z "$PARITY_FILES" ]; then
+      echo "parity variant did not produce parity files"
+      ls -la "done/$BDIR"
+      exit 1
+    fi
+  fi
 
   # Sanity check that list and validate output mention the expected texts
   LISTOUT="$(../../iceshelf-restore $RESTORE_GPG_ARGS --list "$MANIFEST")"
@@ -182,7 +194,17 @@ CONF
     exit 1
   fi
   if [[ "$VARIANT" == *"parity"* ]]; then
-    ../../iceshelf-restore $RESTORE_GPG_ARGS --repair --validate "$MANIFEST" || true
+    REPAIROUT="$(../../iceshelf-restore $RESTORE_GPG_ARGS --repair --validate "$MANIFEST" 2>&1)"
+    echo "$REPAIROUT" | grep -q "Attempting repair" || {
+      echo "repair output missing repair attempt"
+      echo "$REPAIROUT"
+      exit 1
+    }
+    echo "$REPAIROUT" | grep -q "File was repaired successfully" || {
+      echo "repair output missing repair success"
+      echo "$REPAIROUT"
+      exit 1
+    }
   fi
   mv "$ARCHIVE.bak" "$ARCHIVE"
 
