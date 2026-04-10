@@ -860,10 +860,10 @@ while True:
   if cmdline.changes:
     logDetectedChangesAndExit()
 
-  if currentOp["filecount"] == 0 and len(deletedFiles) == 0:
-    if missedFiles is not None:
-      sys.exit(handleOnlyOverlimitFiles(missedFiles))
+  if len(newFiles) == 0 and missedFiles is not None:
+    sys.exit(handleOnlyOverlimitFiles(missedFiles))
 
+  if currentOp["filecount"] == 0 and len(deletedFiles) == 0:
     if completedSlices > 0:
       sys.exit(0)
 

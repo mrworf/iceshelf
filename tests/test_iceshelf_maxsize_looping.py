@@ -160,3 +160,23 @@ def test_unlimited_backup_stays_single_archive(tmp_path):
 
     assert len(backup_ids) == 1
     assert "-s" not in backup_ids[0]
+
+
+def test_overlimit_run_does_not_mark_existing_files_deleted(tmp_path):
+    source_dir = tmp_path / "source"
+    _create_source_files(source_dir)
+
+    initial_config = tmp_path / "initial.conf"
+    _write_config(initial_config, source_dir, max_size="")
+    initial = _run_iceshelf(initial_config)
+    assert initial.returncode == 0
+
+    overlimit_config = tmp_path / "overlimit.conf"
+    _write_config(overlimit_config, source_dir, max_size="1")
+    overlimit = _run_iceshelf(overlimit_config)
+
+    assert overlimit.returncode == 3
+
+    data = _load_checksum(tmp_path)
+    assert data["dataset"][str(source_dir / "a.txt")]["checksum"] != ""
+    assert len(data["backups"]) == 1
