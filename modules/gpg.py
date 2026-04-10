@@ -81,6 +81,38 @@ def _cleanup_passphrase_file(passphrase_file):
         pass
 
 
+def cleanup_passphrase_file(passphrase_file):
+    """Public wrapper for passphrase temp file cleanup."""
+    _cleanup_passphrase_file(passphrase_file)
+
+
+def build_stream_encrypt_command(recipient, keyring_dir=None, passphrase=None,
+                                 armor=False):
+    """Return (args, env, passphrase_file) for stdin->stdout encryption."""
+    args = _base_args(keyring_dir) + ['-z', '0', '--encrypt',
+                                      '--recipient', recipient]
+    if armor:
+        args.append('--armor')
+    env = gpg_env(keyring_dir)
+    extra, _, passphrase_file = _passphrase_args(passphrase, env)
+    args.extend(extra)
+    args.append('-')
+    return args, env, passphrase_file
+
+
+def build_stream_sign_command(keyid, keyring_dir=None, passphrase=None,
+                              binary=False):
+    """Return (args, env, passphrase_file) for stdin->stdout signing."""
+    args = _base_args(keyring_dir) + ['--sign', '--local-user', keyid]
+    if not binary:
+        args.append('--armor')
+    env = gpg_env(keyring_dir)
+    extra, _, passphrase_file = _passphrase_args(passphrase, env)
+    args.extend(extra)
+    args.append('-')
+    return args, env, passphrase_file
+
+
 def gpg_verify(filepath, keyring_dir, skip_signature=False):
     """Run gpg --verify on filepath. Return (success, stderr_text)."""
     if skip_signature:
@@ -170,12 +202,14 @@ def gpg_decrypt_piped(input_path, output_path, keyring_dir, passphrase=None):
         _cleanup_passphrase_file(passphrase_file)
 
 
-def gpg_import_and_trust(keyring_dir, key_data_bytes):
+def gpg_import_and_trust(keyring_dir, key_data_bytes, passphrase=None):
     """Import key data into keyring_dir and set ultimate trust. Return (success, stderr)."""
     env = gpg_env(keyring_dir)
+    passphrase_file = None
     try:
+        extra, _, passphrase_file = _passphrase_args(passphrase, env)
         result = subprocess.run(
-            _base_args(keyring_dir) + ['--import'],
+            _base_args(keyring_dir) + extra + ['--import'],
             input=key_data_bytes,
             capture_output=True,
             timeout=30,
@@ -220,6 +254,8 @@ def gpg_import_and_trust(keyring_dir, key_data_bytes):
         return True, ''
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)
+    finally:
+        _cleanup_passphrase_file(passphrase_file)
 
 
 def gpg_encrypt_file(input_path, output_path, recipient, keyring_dir=None,

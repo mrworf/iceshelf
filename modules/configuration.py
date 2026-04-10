@@ -442,6 +442,9 @@ def parse(filename, onlysecurity=False):
     setting["exclude"] = None
 
   # Lastly, check that required software is installed and available on the path
+  if which("tar") is None:
+    logging.error("To create backups, you must have tar installed")
+    return None
   if setting["parity"] > 0 and which("par2") is None:
     logging.error("To use parity, you must have par2 installed")
     return None

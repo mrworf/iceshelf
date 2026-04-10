@@ -424,6 +424,12 @@ class _ProgressFileReader:
     def seek(self, offset, whence=os.SEEK_SET):
         return self._file.seek(offset, whence)
 
+    def seekable(self):
+        return self._file.seekable()
+
+    def readable(self):
+        return self._file.readable()
+
     def tell(self):
         return self._file.tell()
 
@@ -1626,7 +1632,8 @@ if cmdline.key_file:
     keyring_dir = temp_keyring_dir
     with open(key_path, 'rb') as f:
         key_data = f.read()
-    ok, err = gpg_module.gpg_import_and_trust(temp_keyring_dir, key_data)
+    ok, err = gpg_module.gpg_import_and_trust(
+        temp_keyring_dir, key_data, passphrase=config.get('encrypt-pw'))
     if not ok:
         logging.error(
             'No key could be imported from "%s". Check that the file is a valid GPG key. %s',

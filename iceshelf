@@ -26,33 +26,218 @@
 #
 ################################################################################
 
-def create_archive(base):
-  mode = "w"
-  archive = base + ".tar"
-  if config["compress"] and currentOp["filesize"] > 0:
-    if config["compress-force"] or shouldCompress():
-      mode = "w|bz2"
-      archive += ".bz2"
+def _create_tar_input_list():
+  fd, path = tempfile.mkstemp(prefix="iceshelf-tar.")
+  try:
+    with os.fdopen(fd, "wb") as fp:
+      for filename in newFiles:
+        if filename in movedFiles:
+          continue
+        fp.write(os.fsencode(filename))
+        fp.write(b"\0")
+  except Exception:
+    try:
+      os.unlink(path)
+    except OSError:
+      pass
+    raise
+  return path
+
+
+def _first_stderr_line(stderr_text):
+  for line in stderr_text.splitlines():
+    line = line.strip()
+    if line:
+      return line
+  return None
+
+
+def _log_stage_stderr(stage_name, stderr_text, failed):
+  for line in stderr_text.splitlines():
+    line = line.strip()
+    if not line:
+      continue
+
+    if stage_name == "tar" and "Removing leading `/'" in line:
+      logging.debug("tar: %s", line)
+      continue
+
+    if stage_name == "tar" and (
+      "Cannot stat" in line or
+      "Cannot open" in line or
+      "File removed before we read it" in line
+    ):
+      logging.warning("tar: %s", line)
+      continue
+
+    if failed:
+      logging.error("%s: %s", stage_name, line)
     else:
-      logging.info(
-        "Content is not likely to compress (%d%% chance), skipping compression.",
-        shouldCompress())
-  logging.info(
-    "Preparing content for archiving, may take quite a while depending on size")
-  with tarfile.open(archive, mode) as tar:
-    tar.dereference = True
-    for k in newFiles:
-      if k not in movedFiles:
-        try:
-          tar.add(k, recursive=False)
-          logging.debug('File "%s" added' % k)
-        except IOError as e:
-          if e.errno == 2:
-            logging.warning("File \"%s\" was removed after initial scan", k)
-          else:
-            logging.exception("Error copying file \"%s\"", k)
-            raise
-  return archive
+      logging.debug("%s: %s", stage_name, line)
+
+
+def _remove_partial_output(path):
+  if not path or not os.path.exists(path):
+    return
+
+  try:
+    os.remove(path)
+  except OSError as exc:
+    logging.warning("Unable to remove partial archive \"%s\": %s", path, exc)
+
+
+def _run_stream_pipeline(stages, output_path):
+  processes = []
+  output_handle = None
+  current_stage = None
+
+  try:
+    output_handle = open(output_path, "wb")
+    previous_stdout = None
+
+    for index, stage in enumerate(stages):
+      current_stage = stage
+      stdout = output_handle if index == len(stages) - 1 else PIPE
+      proc = Popen(
+        stage["cmd"],
+        stdin=previous_stdout,
+        stdout=stdout,
+        stderr=PIPE,
+        env=stage.get("env"),
+      )
+      processes.append((stage, proc))
+      if previous_stdout is not None:
+        previous_stdout.close()
+      previous_stdout = proc.stdout if stdout == PIPE else None
+
+    output_handle.close()
+    output_handle = None
+  except OSError as exc:
+    if output_handle is not None:
+      output_handle.close()
+    for _stage, proc in processes:
+      proc.kill()
+      proc.wait()
+    stage_name = current_stage["name"] if current_stage is not None else "output"
+    logging.error("Unable to start archive pipeline stage \"%s\": %s", stage_name, exc)
+    return False
+
+  success = True
+  first_failure = None
+  for stage, proc in processes:
+    returncode = proc.wait()
+    stderr_text = proc.stderr.read().decode("utf-8", errors="replace").strip()
+    failed = returncode != 0
+    _log_stage_stderr(stage["name"], stderr_text, failed)
+    if failed and success:
+      first_failure = (stage["name"], _first_stderr_line(stderr_text), returncode)
+      success = False
+
+  if not success and first_failure is not None:
+    stage_name, stderr_line, returncode = first_failure
+    message = stderr_line or "command exited with code %d" % returncode
+    logging.error("Archive pipeline stage \"%s\" failed: %s", stage_name, message)
+
+  return success
+
+
+def _select_archive_compressor():
+  if not config["compress"] or currentOp["filesize"] <= 0:
+    return None
+
+  if not config["compress-force"] and not shouldCompress():
+    logging.info(
+      "Content is not likely to compress (%d%% chance), skipping compression.",
+      compressionChance())
+    return None
+
+  compressor = fileutils.select_bzip2_compressor(configuration.which)
+  if compressor is None:
+    logging.error("Compression was requested, but no bzip2-compatible compressor was found")
+    return None
+
+  return compressor
+
+
+def create_archive(base):
+  archive = base + ".tar"
+  compressor = _select_archive_compressor()
+  if config["compress"] and currentOp["filesize"] > 0 and (config["compress-force"] or shouldCompress()):
+    if compressor is None:
+      return None
+    archive += ".bz2"
+
+  if config["encrypt"]:
+    archive += ".gpg"
+  if config["sign"]:
+    archive += ".sig"
+
+  tar_cmd = configuration.which("tar")
+  if tar_cmd is None:
+    logging.error("Unable to create archive, tar is not installed")
+    return None
+
+  tar_input = None
+  passphrase_files = []
+  try:
+    tar_input = _create_tar_input_list()
+    stages = [{
+      "name": "tar",
+      "cmd": [
+        tar_cmd,
+        "--create",
+        "--file", "-",
+        "--dereference",
+        "--null",
+        "--files-from", tar_input,
+        "--ignore-failed-read",
+      ],
+    }]
+
+    if compressor is not None:
+      compressor_name = os.path.basename(compressor)
+      if compressor_name != "bzip2":
+        logging.info("Using %s for compression", compressor_name)
+      stages.append({
+        "name": compressor_name,
+        "cmd": [compressor, "-c"],
+      })
+
+    if config["encrypt"]:
+      encrypt_cmd, encrypt_env, encrypt_passphrase = gpg_module.build_stream_encrypt_command(
+        config["encrypt"], keyring_dir, passphrase=config["encrypt-pw"], armor=False)
+      passphrase_files.append(encrypt_passphrase)
+      stages.append({
+        "name": "gpg encrypt",
+        "cmd": encrypt_cmd,
+        "env": encrypt_env,
+      })
+
+    if config["sign"]:
+      sign_cmd, sign_env, sign_passphrase = gpg_module.build_stream_sign_command(
+        config["sign"], keyring_dir, passphrase=config["sign-pw"], binary=True)
+      passphrase_files.append(sign_passphrase)
+      stages.append({
+        "name": "gpg sign",
+        "cmd": sign_cmd,
+        "env": sign_env,
+      })
+
+    logging.info(
+      "Preparing content for archiving, may take quite a while depending on size")
+    if not _run_stream_pipeline(stages, archive):
+      _remove_partial_output(archive)
+      return None
+
+    return archive
+  finally:
+    if tar_input is not None:
+      try:
+        os.unlink(tar_input)
+      except OSError:
+        pass
+    for passphrase_file in passphrase_files:
+      gpg_module.cleanup_passphrase_file(passphrase_file)
 
 
 def create_manifest(path):
@@ -112,6 +297,8 @@ def gatherData():
   havearchive = False
   if len(newFiles) - len(movedFiles):
     file_archive = create_archive(base)
+    if file_archive is None:
+      return None
     havearchive = True
   else:
     if len(movedFiles):
@@ -121,15 +308,6 @@ def gatherData():
 
   if config["manifest"]:
     file_manifest = create_manifest(file_manifest)
-
-  if config["encrypt"] and havearchive:
-    file_archive = encrypt_file(file_archive, armor=False)
-    if file_archive is None:
-      return None
-  if config["sign"] and havearchive:
-    file_archive = sign_file(file_archive, binary=True)
-    if file_archive is None:
-      return None
 
   if havearchive and config["parity"] > 0:
     if not add_parity(file_archive):
@@ -173,7 +351,6 @@ import json
 from datetime import datetime, timezone
 import time
 import shutil
-import tarfile
 import tempfile
 from subprocess import Popen, PIPE
 
@@ -308,11 +485,14 @@ def checkNewVersion():
   except Exception:
     logging.exception('Failed to check for new version')
 
-def shouldCompress():
+def compressionChance():
   if currentOp["filesize"] == 0:
     return 0
-  chance = int((currentOp["compressable"] * 100) / currentOp["filesize"])
-  return chance >= 20
+  return int((currentOp["compressable"] * 100) / currentOp["filesize"])
+
+
+def shouldCompress():
+  return compressionChance() >= 20
 
 def willCompress(filename):
   (ignore, ext) = os.path.splitext(filename)
@@ -685,7 +865,8 @@ if config["encrypt"] or config["sign"]:
     keyring_dir = _temp_keyring_dir
     with open(key_file, 'rb') as kf:
       key_data = kf.read()
-    ok, err = gpg_module.gpg_import_and_trust(keyring_dir, key_data)
+    key_passphrase = config["sign-pw"] or config["encrypt-pw"]
+    ok, err = gpg_module.gpg_import_and_trust(keyring_dir, key_data, passphrase=key_passphrase)
     if not ok:
       logging.error("Failed to import key file: %s", err)
       sys.exit(1)

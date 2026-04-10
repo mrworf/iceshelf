@@ -7,7 +7,7 @@ The design goal for this backup was to leverage known tools and standards, allow
 To that end, this tool uses
 - par2
 - tar
-- bzip2
+- bzip2-compatible compressors (`pbzip2`, `lbzip2`, or `bzip2`)
 - gpg
 - json
 
@@ -19,6 +19,7 @@ If used with immutable storage, then it also provides protection against ransomw
 
 - Encrypts all backups using GPG private/public key
 - Signs all files it uploads (tamper detection)
+- Streams archive creation through tar, optional compression, optional encryption, and optional signing to avoid extra full-size temporary copies
 - Can upload separate PAR2 file for parity correction (allows for a certain amount of bitrot)
 - Supports segmentation of upload (but not of files, yet)
 - Pluggable provider system supporting legacy Glacier vaults, S3, SFTP, SCP and local copy
@@ -105,10 +106,10 @@ me, finding cool names (phun intended) for projects is not always easy*
 
 1. Loads backup database if available
 2. Empties prep directory of any files
-3. Creates a tar file (recreating directory structure) until no more are found or limit is hit. If this wasn't the first run, only new or changed files are added
-4. Depending on options, tar file is compressed with bzip2
-5. The archive is encrypted with a public key of your choice
-6. The archive is signed with a public key of your choice (not necessarily the same as in #6)
+3. Streams the archive through `tar` (recreating directory structure) until no more files are found or the limit is hit. If this wasn't the first run, only new or changed files are added
+4. Depending on options, the tar stream is compressed with a bzip2-compatible compressor (`pbzip2`, `lbzip2`, then `bzip2`)
+5. The archive stream is encrypted with a public key of your choice
+6. The archive stream is signed with a public key of your choice (not necessarily the same as in #5)
 7. A manifest of all files in the archive + checksums is stored as a JSON file
 8. The manifest is signed (using ASCII instead of binary to keep it readable)
 9. Parity file(s) are created to allow the archive to be restored should bitrot happen
@@ -151,14 +152,19 @@ See [docker.md](DOCKER.md) for full documentation on running iceshelf in Docker.
 
 In order to be able to run this, you need a few other parts installed.
 
+- tar - required for backup creation
+- A bzip2-compatible compressor (`pbzip2`, `lbzip2`, or `bzip2`) - required when compression is enabled; iceshelf prefers them in that order
 - OpenPGP / GNU Privacy Guard (the `gpg` command-line tool) - for encryption and signatures
 - par2 - Parity tool (optional, only needed for parity support)
 - Python packages: `boto3`, `PyYAML` (install with `pip3 install -r requirements.txt`)
 
 ### Installing on Ubuntu
 
-1. GPG
-  Easy enough, ubuntu comes with it pre-installed
+1. Archiving and encryption tools
+  ```
+  sudo apt-get install tar bzip2 gnupg
+  ```
+
 2. Python dependencies
   ```
   sudo apt-get install python3-dev python3-pip
@@ -195,7 +201,7 @@ Iceshelf needs some space for both temporary files and the local database.
 
 #### prep dir
 
-The folder to hold the temporary files, like the in-transit tar files and related files, so a ram-backed storage (such as tmpfs) is a **VERY BAD IDEA**. Uploads to remote storage may take quite a while.
+The folder to hold the temporary files and final artifacts before upload. Archive creation is streamed, so iceshelf no longer needs separate full-size tar/compress/encrypt/sign intermediates there, but uploads to remote storage may still take quite a while. A ram-backed storage (such as tmpfs) is still a **VERY BAD IDEA** for real backups.
 
 *default is `backup/inprogress/`*
 

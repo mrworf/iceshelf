@@ -113,3 +113,16 @@ def generateFilelist(path, output):
   with open(output, 'w', encoding="utf-8") as lst:
     for f in files:
       lst.write('{}  {}\n'.format(hashFile(os.path.join(path, f), 'sha1'), f))
+
+
+def select_bzip2_compressor(which_func=None):
+  """Return the preferred available bzip2-compatible compressor path."""
+  if which_func is None:
+    which_func = shutil.which
+
+  for candidate in ("pbzip2", "lbzip2", "bzip2"):
+    resolved = which_func(candidate)
+    if resolved:
+      return resolved
+
+  return None

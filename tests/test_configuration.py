@@ -222,6 +222,23 @@ external file = |{exclude_rules}
 
 
 class TestParseErrors:
+    def test_missing_tar_binary_fails(self, valid_layout, caplog, monkeypatch):
+        caplog.set_level(logging.ERROR)
+
+        original_which = configuration.which
+
+        def fake_which(program):
+            if program == "tar":
+                return None
+            return original_which(program)
+
+        monkeypatch.setattr(configuration, "which", fake_which)
+
+        parsed = _parse(valid_layout, caplog=caplog)
+
+        assert parsed is None
+        assert "To create backups, you must have tar installed" in caplog.text
+
     def test_missing_sources_still_fails(self, valid_layout, caplog):
         caplog.set_level(logging.ERROR)
 
