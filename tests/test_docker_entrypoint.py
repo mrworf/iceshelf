@@ -141,6 +141,7 @@ class TestEnvBaseline:
         cfg = entrypoint._build_env_baseline({
             "CFG_OPTIONS_MAX_SIZE": "1G",
             "CFG_OPTIONS_CHANGE_METHOD": "data",
+            "CFG_OPTIONS_LOOP_SLICES": "no",
             "CFG_OPTIONS_SKIP_BROKEN_LINKS": "yes",
             "CFG_SECURITY_ENCRYPT": "me@example.com",
             "CFG_CUSTOM_PRE_COMMAND": "/usr/local/bin/prep",
@@ -148,6 +149,7 @@ class TestEnvBaseline:
 
         assert cfg.get("options", "max size") == "1G"
         assert cfg.get("options", "change method") == "data"
+        assert cfg.get("options", "loop slices") == "no"
         assert cfg.get("options", "skip broken links") == "yes"
         assert cfg.get("security", "encrypt") == "me@example.com"
         assert cfg.get("custom", "pre command") == "/usr/local/bin/prep"

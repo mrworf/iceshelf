@@ -193,6 +193,7 @@ deletedFiles = {}
 backupSets = {}
 currentOp = {"filecount": 0, "filesize": 0, "compressable" : 0}
 oldVault = None
+handledFilesInRun = set()
 
 incompressable = [
   "jpg", "gif", "mkv", "avi", "mov", "mp4",
@@ -369,6 +370,9 @@ def collectFile(filename):
   else:
     item.append(filename)
 
+  if cmdline.full and filename in handledFilesInRun:
+    return True
+
   item = oldFiles.get(filename)
   if item is None or item["checksum"] == '' or fileutils.hashChanged(filename, item["checksum"], chksum) or cmdline.full:
     currentOp["filecount"] += 1
@@ -411,6 +415,246 @@ def collectSources(sources):
   if len(result['files']) == 0:
     result = None
   return result
+
+
+def resetSliceState():
+  global newFiles, shaFiles, movedFiles, deletedFiles, currentOp
+
+  newFiles = {}
+  shaFiles = {}
+  movedFiles = {}
+  deletedFiles = {}
+  currentOp = {"filecount": 0, "filesize": 0, "compressable" : 0}
+
+  for k in oldFiles:
+    if oldFiles[k]["checksum"] != '':
+      deletedFiles[k] = oldFiles[k]
+
+
+def detectMoves():
+  global movedFiles
+
+  if not config["detect-move"]:
+    return
+
+  tmpRemove = []
+  for k,v in deletedFiles.items():
+    item = shaFiles.get(v["checksum"])
+    if item:
+      for f in item:
+        if f in newFiles:
+          movedFiles[f] = k
+          tmpRemove.append(k)
+          logging.debug('''File "%s" moved to "%s"''' % (k, f))
+          break
+  for k in tmpRemove:
+    deletedFiles.pop(k, None)
+
+
+def logDetectedChangesAndExit():
+  logging.info("Detected changes:")
+  for k in deletedFiles:
+    logging.info(u"\"%s\" was deleted", k)
+
+  for k in newFiles:
+    if k in movedFiles:
+      logging.info(u"\"%s\" was renamed/moved from \"%s\"", k, movedFiles[k])
+    elif k not in oldFiles:
+      logging.info(u"\"%s\" is new", k)
+    else:
+      logging.info(u"\"%s\" changed", k)
+
+  if currentOp["filecount"] > 0 or len(deletedFiles):
+    logging.info("===============")
+    if len(oldFiles) == 0:
+      logging.info("%d files (%s) to be backed up", currentOp["filecount"], helper.formatSize(currentOp["filesize"]))
+    else:
+      logging.info("%d files (%s) has changed or been added since last backup, %d has been deleted", currentOp["filecount"], helper.formatSize(currentOp["filesize"]), len(deletedFiles))
+    sys.exit(1)
+
+  logging.info("No file(s) changed or added since last backup")
+  sys.exit(0)
+
+
+def handleOnlyOverlimitFiles(missedFiles):
+  logging.info("Done. There were files which didn't fit the maxsize limit (%d files, %s)", len(missedFiles['files']), helper.formatSize(missedFiles['size']))
+  if cmdline.debug:
+    for f in missedFiles['files']:
+      logging.debug('Ignored: "%s"', f)
+  if config["ignore-overlimit"]:
+    logging.info('Since ignore overlimit was set, this is still considered a success')
+    return 0
+
+  logging.error("Cannot continue since there are files bigger than maxsize")
+  return 3
+
+
+def logGatheredFiles(files):
+  msg = "%d files (%s) gathered" % (currentOp["filecount"], helper.formatSize(currentOp["filesize"]))
+  if config["compress"] and (shouldCompress() or config["compress-force"]):
+    msg += ", compressed"
+  if config["encrypt"]:
+    msg += ", encrypted"
+  if config["sign"]:
+    msg += ", signed"
+  totalbytes = fileutils.sumSize(config["prepdir"], files)
+  msg += " and ready to upload as %d files, total %s" % (len(files), helper.formatSize(totalbytes))
+  logging.info(msg)
+
+
+def uploadPreparedFiles(files):
+  file_paths = [os.path.join(config["prepdir"], f) for f in files]
+  for p in provider_objects:
+    backup = p.upload_files(file_paths)
+    if not backup:
+      logging.error("Backup provider %s failed to store files", p)
+      return False
+  return True
+
+
+def _provider_storage_metadata():
+  vault = None
+  storage_ids = []
+  for p in provider_objects:
+    try:
+      if vault is None:
+        pv = p.get_vault()
+        if pv:
+          vault = pv
+    except Exception:
+      logging.exception("Provider %s failed to report vault", p)
+    try:
+      storage_ids.append(p.storage_id())
+    except Exception:
+      logging.exception("Provider %s failed to report storage location", p)
+  return vault, storage_ids
+
+
+def saveState():
+  global lastBackup
+
+  logging.info("Saving the new checksum")
+  vault, storage_ids = _provider_storage_metadata()
+  saveData = {
+    "version" : configuration.getVersion(),
+    "timestamp" : time.time(),
+    "dataset" : oldFiles,
+    "backups" : backupSets,
+    "vault" : vault,
+    "storage" : storage_ids,
+    "moved" : oldMoves,
+    "lastbackup" : config["prefix"] + config["unique"]
+  }
+  with open(config["file-checksum"] + "_tmp", "wb") as fp:
+    fp.write(json.dumps(saveData, ensure_ascii=False).encode("utf-8"))
+
+  try:
+    shutil.copy(config["file-checksum"] + "_tmp", config["file-checksum"])
+  except OSError as e:
+    if e.errno == 1:
+      logging.debug("Unable to change permissons on copied file: %s" % config["file-checksum"])
+    else:
+      logging.exception("Error copying file")
+      raise
+
+  try:
+    os.remove(config["file-checksum"] + "_tmp")
+  except OSError:
+    logging.exception("Error removing temporary database")
+    raise
+
+  lastBackup = config["prefix"] + config["unique"]
+
+
+def moveBackedUpFiles(files):
+  if config["donedir"] is None:
+    return
+
+  logging.info("Moving backed up archive into done directory")
+  dest = os.path.join(config["donedir"], config["unique"])
+  os.mkdir(dest)
+  for f in files:
+    try:
+      shutil.copy(
+        os.path.join(config["prepdir"], f),
+        os.path.join(dest, f)
+      )
+    except OSError as e:
+      if e.errno == 1:
+        logging.debug("Unable to change permissons on copied file: %s" % dest)
+      else:
+        logging.exception("Error copying file")
+        raise
+    os.remove(os.path.join(config["prepdir"], f))
+  os.rmdir(config["prepdir"])
+
+  if config["maxkeep"] > 0:
+    archives = os.listdir(config["donedir"])
+    archives.sort()
+    logging.info("Told to keep %d archive(s), we have %d", config["maxkeep"], len(archives))
+    while len(archives) > config["maxkeep"]:
+      folder = archives.pop(0)
+      logging.info("Deleting \"%s\"", folder)
+      shutil.rmtree(os.path.join(config["donedir"], folder))
+
+
+def commitCurrentSlice(files, runHandledFiles):
+  global oldMoves
+
+  for k,v in newFiles.items():
+    if k in oldFiles:
+      newFiles[k]["memberof"] += oldFiles[k]["memberof"]
+      if "deleted" in oldFiles[k]:
+        newFiles[k]["deleted"] += oldFiles[k]["deleted"]
+    oldFiles[k] = newFiles[k]
+
+    if k in oldMoves:
+      logging.info("Removing " + k + " since it's marked as new")
+      oldMoves.pop(k)
+
+  for f in deletedFiles:
+    logging.debug('''File "%s" deleted''' % f)
+    if "deleted" in oldFiles[f]:
+      oldFiles[f]["deleted"].append(config["unique"])
+    else:
+      oldFiles[f]["deleted"] = [config["unique"]]
+    oldFiles[f]["checksum"] = ""
+
+  committedMoves = {}
+  for _new,_old in movedFiles.items():
+    if _old in oldMoves:
+      committedMoves[_new] = oldMoves[_old]
+      oldMoves.pop(_old)
+    else:
+      lst = sorted(oldFiles[_old]['memberof'])
+      committedMoves[_new] = {'reference' : lst[len(lst)-1], 'original' : _old}
+
+    if "deleted" in oldFiles[_old]:
+      oldFiles[_old]["deleted"].append(config["unique"])
+    else:
+      oldFiles[_old]["deleted"] = [config["unique"]]
+    oldFiles[_old]["checksum"] = ""
+
+  committedMoves.update(oldMoves)
+  oldMoves = committedMoves
+
+  backupSets[config["unique"]] = files
+  runHandledFiles.update(newFiles.keys())
+
+  saveState()
+  moveBackedUpFiles(files)
+
+
+def preparePrepDir():
+  logging.info("Setting up the prep directory")
+  try:
+    os.makedirs(config["prepdir"])
+  except OSError as e:
+    if e.errno != 17:
+      logging.exception("Error creating prep directory")
+      raise
+
+  fileutils.deleteTree(config["prepdir"])
 
 
 
@@ -467,6 +711,7 @@ config["file-checksum"] = os.path.join(config["datadir"], "checksum.json")
 tm = datetime.now(timezone.utc)
 config["unique"] = "%d%02d%02d-%02d%02d%02d-%05x" % (tm.year, tm.month, tm.day, tm.hour, tm.minute, tm.second, tm.microsecond)
 config["archivedir"] = os.path.join(config["prepdir"], config["unique"])
+runUnique = config["unique"]
 
 # Instantiate backup providers
 providers_cfg = config.get("providers", [])
@@ -589,249 +834,66 @@ if cmdline.find:
   else:
     sys.exit(1)
 
+autoLoopSlices = config["maxsize"] > 0 and config["loop-slices"] and not cmdline.changes
+sliceNumber = 0
+completedSlices = 0
 
-logging.info("Setting up the prep directory")
-try:
-  os.makedirs(config["prepdir"])
-except OSError as e:
-  if e.errno != 17:
-    logging.exception("Error creating prep directory")
-    raise
-
-fileutils.deleteTree(config["prepdir"])
-
-logging.info("Checking sources for changes")
-try:
-  missedFiles = collectSources(config['sources'])
-except SourceCollectionError:
-  sys.exit(1)
-
-logging.debug("Processing file structure changes")
-
-"""
-Figure out if any file was renamed, this is easily detected since a deleted file
-will have a new file with the same checksum.
-"""
-if config["detect-move"]:
-  tmpRemove = []
-  for k,v in deletedFiles.items():
-    item = shaFiles.get(v["checksum"])
-    if item:
-      for f in item:
-        if f in newFiles:
-          # Moved! From k to f
-          movedFiles[f] = k
-          tmpRemove.append(k)
-          logging.debug('''File "%s" moved to "%s"''' % (k, f))
-          break
-  for k in tmpRemove:
-    deletedFiles.pop(k, None)
-
-# When looking for changes, only provide a list of changes + summary
-if cmdline.changes:
-  logging.info("Detected changes:")
-  for k in deletedFiles:
-    logging.info(u"\"%s\" was deleted", k)
-
-  for k in newFiles:
-    if k in movedFiles:
-      logging.info(u"\"%s\" was renamed/moved from \"%s\"", k, movedFiles[k])
-    elif k not in oldFiles:
-      logging.info(u"\"%s\" is new", k)
-    else:
-      logging.info(u"\"%s\" changed", k)
-
-  if currentOp["filecount"] > 0 or len(deletedFiles):
-    logging.info("===============")
-    if len(oldFiles) == 0:
-      logging.info("%d files (%s) to be backed up", currentOp["filecount"], helper.formatSize(currentOp["filesize"]))
-    else:
-      logging.info("%d files (%s) has changed or been added since last backup, %d has been deleted", currentOp["filecount"], helper.formatSize(currentOp["filesize"]), len(deletedFiles))
-    sys.exit(1)
+while True:
+  if autoLoopSlices:
+    sliceNumber += 1
+    config["unique"] = "%s-s%04d" % (runUnique, sliceNumber)
   else:
-    logging.info("No file(s) changed or added since last backup")
-    sys.exit(0)
+    config["unique"] = runUnique
+  config["archivedir"] = os.path.join(config["prepdir"], config["unique"])
 
-if len(newFiles) == 0 and missedFiles is not None:
-  logging.info("Done. There were files which didn't fit the maxsize limit (%d files, %s)", len(missedFiles['files']), helper.formatSize(missedFiles['size']))
-  if cmdline.debug:
-    for f in missedFiles['files']:
-      logging.debug('Ignored: "%s"', f)
-  if config["ignore-overlimit"]:
-    logging.info('Since ignore overlimit was set, this is still considered a success')
-    sys.exit(0)
-  else:
-    logging.error("Cannot continue since there are files bigger than maxsize")
-    sys.exit(3)
+  resetSliceState()
 
-# Time to compress
-files = gatherData()
-if files is None:
-  logging.error("Failed to gather all data and compress it.")
-  sys.exit(2)
-
-if currentOp["filecount"] == 0 and len(deletedFiles) == 0 and config["skip-empty"]:
-  logging.info("No changes detected, skipping backup")
-  sys.exit(0)
-
-msg = "%d files (%s) gathered" % (currentOp["filecount"], helper.formatSize(currentOp["filesize"]))
-if config["compress"] and (shouldCompress() or config["compress-force"]):
-  msg += ", compressed"
-if config["encrypt"]:
-  msg += ", encrypted"
-if config["sign"]:
-  msg += ", signed"
-totalbytes = fileutils.sumSize(config["prepdir"], files)
-msg += " and ready to upload as %d files, total %s" % (len(files), helper.formatSize(totalbytes))
-logging.info(msg)
-
-##############################################################################
-#
-
-# We want to avoid wasting requests, so only try to
-# create vaults if we need to.
-file_paths = [os.path.join(config["prepdir"], f) for f in files]
-for p in provider_objects:
-  backup = p.upload_files(file_paths)
-  if not backup:
-    logging.error("Backup provider %s failed to store files", p)
+  logging.info("Checking sources for changes")
+  try:
+    missedFiles = collectSources(config['sources'])
+  except SourceCollectionError:
     sys.exit(1)
 
-#
-##############################################################################
+  logging.debug("Processing file structure changes")
+  detectMoves()
 
-# merge new files, checksums and memberships
-for k,v in newFiles.items():
-  if k in oldFiles: # Don't forget any old memberships
-    newFiles[k]["memberof"] += oldFiles[k]["memberof"]
-    if "deleted" in oldFiles[k]:
-      newFiles[k]["deleted"] += oldFiles[k]["deleted"]
-  oldFiles[k] = newFiles[k]
+  if cmdline.changes:
+    logDetectedChangesAndExit()
 
-  # Get rid of this file from the moves database since we now have a fresh copy
-  if k in oldMoves:
-    logging.info("Removing " + k + " since it's marked as new")
-    oldMoves.pop(k)
+  if currentOp["filecount"] == 0 and len(deletedFiles) == 0:
+    if missedFiles is not None:
+      sys.exit(handleOnlyOverlimitFiles(missedFiles))
 
-"""
-Deal with deleted files. We must store all deletes as an array since user can
-restore the file. We also must wipe the checksum so a restored file gets backed
-up again.
-"""
-for f in deletedFiles:
-  logging.debug('''File "%s" deleted''' % f)
-  if "deleted" in oldFiles[f]:
-    oldFiles[f]["deleted"].append(config["unique"])
-  else:
-    oldFiles[f]["deleted"] = [config["unique"]]
-  oldFiles[f]["checksum"] = "" # Wipe checksum to make sure new copy is backed up
+    if completedSlices > 0:
+      sys.exit(0)
 
-# We also need to handle the moved files properly to avoid marking a moved file as deleted
-# on the next run.
+    if config["skip-empty"]:
+      logging.info("No changes detected, skipping backup")
+      sys.exit(0)
 
-for _new,_old in movedFiles.items():
-  # Note where we got this copy from
-  if _old in oldMoves:
-    # Just readjust this entry
-    movedFiles[_new] = oldMoves[_old]
-    oldMoves.pop(_old)
-  else:
-    # Create a new moved entry
-    lst = sorted(oldFiles[_old]['memberof'])
-    movedFiles[_new] = {'reference' : lst[len(lst)-1], 'original' : _old}
+  preparePrepDir()
 
-  # Clear other fields
-  if "deleted" in oldFiles[_old]:
-    oldFiles[_old]["deleted"].append(config["unique"])
-  else:
-    oldFiles[_old]["deleted"] = [config["unique"]]
-  oldFiles[_old]["checksum"] = ""
+  files = gatherData()
+  if files is None:
+    logging.error("Failed to gather all data and compress it.")
+    sys.exit(2)
 
-# Finally, append any previously moved files
-movedFiles.update(oldMoves)
+  logGatheredFiles(files)
+  if not uploadPreparedFiles(files):
+    sys.exit(1)
 
-# Add the backup to our sets...
-backupSets[config["unique"]] = files
+  commitCurrentSlice(files, handledFilesInRun)
+  completedSlices += 1
 
-logging.info("Saving the new checksum")
-vault = None
-storage_ids = []
-for p in provider_objects:
-  try:
-    if vault is None:
-      pv = p.get_vault()
-      if pv:
-        vault = pv
-  except Exception:
-    logging.exception("Provider %s failed to report vault", p)
-  try:
-    storage_ids.append(p.storage_id())
-  except Exception:
-    logging.exception("Provider %s failed to report storage location", p)
+  if missedFiles is None:
+    sys.exit(0)
 
-saveData = {
-  "version" : configuration.getVersion(),
-  "timestamp" : time.time(),
-  "dataset" : oldFiles,
-  "backups" : backupSets,
-  "vault" : vault,
-  "storage" : storage_ids,
-  "moved" : movedFiles,
-  "lastbackup" : config["prefix"] + config["unique"]
-}
-with open(config["file-checksum"] + "_tmp", "wb") as fp:
-  fp.write(json.dumps(saveData, ensure_ascii=False).encode("utf-8"))
+  if autoLoopSlices:
+    logging.info("Reached max size for this slice, continuing with remaining files")
+    continue
 
-# Copy the new file into place and then delete the temp file
-try:
-  shutil.copy(config["file-checksum"] + "_tmp", config["file-checksum"])
-except OSError as e:
-  if e.errno == 1:
-    logging.debug("Unable to change permissons on copied file: %s" % config["file-checksum"])
-  else:
-    logging.exception("Error copying file")
-    raise
-
-try:
-  os.remove(config["file-checksum"] + "_tmp")
-except OSError as e:
-  logging.exception("Error removing temporary database")
-  raise
-
-if config["donedir"] is not None:
-  logging.info("Moving backed up archive into done directory")
-  dest = os.path.join(config["donedir"], config["unique"])
-  os.mkdir(dest)
-  for f in files:
-    try:
-      shutil.copy(
-        os.path.join(config["prepdir"], f),
-        os.path.join(dest, f)
-      )
-    except OSError as e:
-      if e.errno == 1:
-        logging.debug("Unable to change permissons on copied file: %s" % dest)
-      else:
-        logging.exception("Error copying file")
-        raise
-    os.remove(os.path.join(config["prepdir"], f))
-  os.rmdir(config["prepdir"])
-
-  # Finally, we count the number of stored archives and delete the
-  # older ones exceeding the defined limit.
-  if config["maxkeep"] > 0:
-    archives = os.listdir(config["donedir"])
-    archives.sort()
-    logging.info("Told to keep %d archive(s), we have %d", config["maxkeep"], len(archives))
-    while len(archives) > config["maxkeep"]:
-      folder = archives.pop(0)
-      logging.info("Deleting \"%s\"", folder)
-      shutil.rmtree(os.path.join(config["donedir"], folder))
-
-if missedFiles is not None:
   logging.warn("Reached size limit, recommend running again after this session (skipped %d files, %s)", len(missedFiles['files']), helper.formatSize(missedFiles['size']))
   if cmdline.debug:
     for f in missedFiles['files']:
       logging.debug('Skipped: "%s"', f)
   sys.exit(10)
-sys.exit(0)

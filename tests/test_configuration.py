@@ -270,6 +270,17 @@ skip broken links = maybe
         assert parsed is None
         assert "skip broken links has to be yes/no" in caplog.text
 
+    def test_loop_slices_invalid_value_fails(self, valid_layout, caplog):
+        caplog.set_level(logging.ERROR)
+
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+loop slices = maybe
+""", caplog=caplog)
+
+        assert parsed is None
+        assert "loop slices has to be yes/no" in caplog.text
+
 
 class TestParseOptions:
     def test_skip_broken_links_yes_parses_true(self, valid_layout):
@@ -289,3 +300,21 @@ skip broken links = no
 
         assert parsed is not None
         assert parsed["skip-broken-links"] is False
+
+    def test_loop_slices_yes_parses_true(self, valid_layout):
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+loop slices = yes
+""")
+
+        assert parsed is not None
+        assert parsed["loop-slices"] is True
+
+    def test_loop_slices_no_parses_false(self, valid_layout):
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+loop slices = no
+""")
+
+        assert parsed is not None
+        assert parsed["loop-slices"] is False

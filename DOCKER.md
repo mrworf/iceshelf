@@ -18,6 +18,7 @@ services:
       BACKUP_INTERVAL: "24h"
       BACKUP_START_TIME: "03:00"
       CFG_OPTIONS_MAX_SIZE: "50G"
+      CFG_OPTIONS_LOOP_SLICES: "yes"
       CFG_OPTIONS_COMPRESS: "yes"
       CFG_OPTIONS_SKIP_BROKEN_LINKS: "yes"
       CFG_PROVIDER_LOCAL_TYPE: "cp"
@@ -63,6 +64,7 @@ A sample baseline is included at `docker/baseline.sample.conf`.
 Docker-specific env vars use this naming scheme:
 
 - `CFG_OPTIONS_MAX_SIZE` -> `[options] max size`
+- `CFG_OPTIONS_LOOP_SLICES` -> `[options] loop slices`
 - `CFG_OPTIONS_CHANGE_METHOD` -> `[options] change method`
 - `CFG_OPTIONS_SKIP_BROKEN_LINKS` -> `[options] skip broken links`
 - `CFG_SECURITY_ENCRYPT` -> `[security] encrypt`
@@ -91,6 +93,8 @@ Limitations:
 - Per-folder `.iceshelf/config` remains the right place for target-specific overrides that do not fit well in env vars.
 
 For example, `CFG_OPTIONS_SKIP_BROKEN_LINKS=yes` makes the container warn and continue when it encounters a dangling symlink during scanning. Valid symlinks are still followed normally.
+
+When `CFG_OPTIONS_MAX_SIZE` is set, the default `CFG_OPTIONS_LOOP_SLICES=yes` makes one run keep producing slices until the target is fully backed up. Set `CFG_OPTIONS_LOOP_SLICES=no` if you want the older one-slice-per-run behavior instead.
 
 ### Per-folder configuration
 
@@ -241,6 +245,7 @@ services:
       BACKUP_INTERVAL: "24h"
       BACKUP_START_TIME: "03:00"
       CFG_OPTIONS_MAX_SIZE: "50G"
+      CFG_OPTIONS_LOOP_SLICES: "yes"
       CFG_OPTIONS_COMPRESS: "yes"
       CFG_OPTIONS_CHANGE_METHOD: "data"
       CFG_OPTIONS_SKIP_BROKEN_LINKS: "yes"

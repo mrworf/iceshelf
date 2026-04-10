@@ -35,7 +35,8 @@ setting = {
   "checkupdate" : False,
   "custom-pre" : None,
   "custom-post" : None,
-  "key-file" : None
+  "key-file" : None,
+  "loop-slices": True,
 }
 
 CONFIG_SECTION_DEFAULTS = {
@@ -61,6 +62,7 @@ CONFIG_SECTION_DEFAULTS = {
     "max keep": "0",
     "create filelist": "yes",
     "check update": "no",
+    "loop slices": "yes",
     # Historically documented and still accepted by the parser.
     "prefix": ""
   },
@@ -135,6 +137,34 @@ def _warn_unknown_provider_options(config, section):
 
 def getVersion():
   return [1,1,0]
+
+
+def _parse_size_option(config, section, option, label):
+  value = config.get(section, option).strip()
+  if value == "":
+    return 0
+  if value.isdigit():
+    return int(value)
+
+  unit = value.lower()[-1:]
+  number = value[:-1]
+  if not number.isdigit():
+    logging.error("%s has to be a number and may contain a unit suffix", label)
+    return None
+
+  parsed = int(number, 10)
+  if unit == 'k':
+    parsed *= 1024
+  elif unit == 'm':
+    parsed *= 1048576
+  elif unit == 'g':
+    parsed *= 1073741824
+  elif unit == 't':
+    parsed *= 1099511627776
+  else:
+    logging.error("%s has to be a number and may contain a unit suffix", label)
+    return None
+  return parsed
 
 def isCompatible(version):
   """
@@ -278,28 +308,16 @@ def parse(filename, onlysecurity=False):
       return None
     setting["detect-move"] = True
 
-  if config.get("options", "max size").isdigit() and config.getint("options", "max size") > 0:
-    setting["maxsize"] = config.getint("options", "max size")
-  elif not config.get("options", "max size").isdigit() and config.get("options", "max size") != "":
-    unit = config.get("options", "max size").lower()[-1:]
-    value = config.get("options", "max size")[:-1]
-    if not value.isdigit():
-      logging.error("Max size has to be a number and may contain a unit suffix")
-      return None
-    value = int(value, 10)
+  maxsize = _parse_size_option(config, "options", "max size", "Max size")
+  if maxsize is None:
+    return None
+  setting["maxsize"] = maxsize
 
-    if unit == 'k':
-      value *= 1024
-    elif unit == 'm':
-      value *= 1048576
-    elif unit == 'g':
-      value *= 1073741824
-    elif unit == 't':
-      value *= 1099511627776
-    else:
-      logging.error("Max size has to be a number and may contain a unit suffix")
-      sys.exit(1)
-    setting["maxsize"] = value
+  if config.get("options", "loop slices").lower() not in ["yes", "no"]:
+    logging.error("loop slices has to be yes/no")
+    return None
+  elif config.get("options", "loop slices").lower() == "no":
+    setting["loop-slices"] = False
 
   if not config.get("security", "add parity").isdigit() or config.getint("security", "add parity") > 100 or config.getint("security", "add parity") < 0:
     logging.error("Parity ranges from 0 to 100, " + config.get("security", "add parity") + " is invalid")

@@ -231,17 +231,31 @@ Will try to detect if there is a new version of iceshelf available and if so, pr
 
 #### max size
 
-Defines the maxium size of the *uncompressed* data. It will never go above this, but depending on various other options, the resulting backup files may exceed it.
+Defines the maximum amount of source data that may be packed into one backup slice. Iceshelf counts the sizes of the files selected for the current slice, so this also becomes the largest single file that can fit in that slice. Depending on compression, encryption, signatures, and parity, the generated backup artifacts may still exceed this size on disk.
 
 This option is defined in bytes, but can also be suffixed with K, M, G or T to indicate the unit. We're using true powers of 2 here, so 1K = 1024.
 
 A value of zero or simply blank (or left out) will make it unlimited (unless `add parity` is in-effect)
 
-**If the backup didn't include all files due to exceeded max size, then iceshelf will exit with code 10. By rerunning iceshelf with the same parameters it will continue where it left of. If you do this until it exits with zero, you'll have a full backup.
+With the default `loop slices = yes`, iceshelf will keep creating, uploading, and committing slices in the same run until everything that fits has been backed up.
 
-This behavior is to allow you to segment your uploads into a specific size.**
+If you disable `loop slices`, then a run stops after the first full slice. In that mode, if more files remain, iceshelf exits with code 10 and a rerun continues from the last committed slice.
+
+This behavior is what allows you to segment uploads into a specific per-slice size.
 
 *default is blank, no limit*
+
+#### loop slices
+
+Controls whether iceshelf should continue creating additional slices in the same invocation when `max size` is reached.
+
+If `yes`, iceshelf will upload the current slice, save the local database, clear temporary files, and continue with the remaining files automatically.
+
+If `no`, iceshelf keeps the older one-slice-per-run behavior. When more files remain that would fit in another slice, it exits with code 10 so you can rerun it later.
+
+This option only matters when `max size` is greater than zero.
+
+*default is `yes`*
 
 #### change method
 
@@ -516,9 +530,9 @@ Depending on what happened during the run, iceshelf will return the following ex
 
 2 = Unable to gather all data, meaning that while creating the archive to upload, some kind of I/O related error happened. The log should give you an idea of what. Can happen when files disappear during archive creation
 
-3 = Amount of files to backup exceed the `max size` parameter and `persuasive` wasn't enabled
+3 = Remaining files are larger than the effective `max size`, so they can never fit in a slice
 
-10 = Backup was successful, but there are more files to backup. Happens if `persuasive` and `max size` is enabled and the amount of data exceeds `max size`. Running the tool again will gather any files which weren't backed up. Ideally you continue to run the tool until it returns 0
+10 = Backup was successful, but there are more files to back up. This happens when `max size` is enabled, `loop slices` is disabled, and more files remain for a later slice
 
 255 = Generic error, see log output
 

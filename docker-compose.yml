@@ -20,6 +20,7 @@ services:
       # BACKUP_START_TIME: "03:00"
       # Baseline config via environment variables.
       CFG_OPTIONS_MAX_SIZE: "50G"
+      CFG_OPTIONS_LOOP_SLICES: "yes"
       CFG_OPTIONS_COMPRESS: "yes"
       # Optional: skip dangling symlinks instead of failing the run.
       # CFG_OPTIONS_SKIP_BROKEN_LINKS: "yes"
