@@ -120,7 +120,7 @@ def select_bzip2_compressor(which_func=None):
   if which_func is None:
     which_func = shutil.which
 
-  for candidate in ("pbzip2", "lbzip2", "bzip2"):
+  for candidate in ("lbzip2", "pbzip2", "bzip2"):
     resolved = which_func(candidate)
     if resolved:
       return resolved

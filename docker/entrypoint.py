@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -26,6 +27,7 @@ shutting_down = False
 current_proc = None
 CFG_ENV_PREFIX = "CFG_"
 CFG_SIMPLE_SECTIONS = {"options", "security", "custom", "paths", "sources", "exclude"}
+BZIP2_CANDIDATES = ("lbzip2", "pbzip2", "bzip2")
 
 
 def setup_logging():
@@ -34,6 +36,48 @@ def setup_logging():
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
     root.addHandler(handler)
+
+
+def _detect_runtime_tools(which_func=None):
+    """Inspect runtime tools expected to be available in the container."""
+    which_func = which_func or shutil.which
+    tools = {
+        "tar": which_func("tar"),
+        "lbzip2": which_func("lbzip2"),
+        "bzip2": which_func("bzip2"),
+        "gpg": which_func("gpg"),
+        "par2": which_func("par2"),
+    }
+
+    preferred_compressor = None
+    for candidate in BZIP2_CANDIDATES:
+        resolved = which_func(candidate)
+        if resolved:
+            preferred_compressor = resolved
+            break
+
+    tools["preferred_compressor"] = preferred_compressor
+    return tools
+
+
+def log_runtime_tools(which_func=None):
+    """Log the container's archive/compression/security tool availability."""
+    tools = _detect_runtime_tools(which_func=which_func)
+
+    log.info("  Runtime tools   :")
+    for tool_name in ("tar", "lbzip2", "bzip2", "gpg", "par2"):
+        resolved = tools[tool_name]
+        if resolved:
+            log.info("    %-7s : %s", tool_name, resolved)
+        else:
+            log.warning("    %-7s : missing", tool_name)
+
+    preferred = tools["preferred_compressor"]
+    if preferred:
+        log.info("  Compression     : prefer %s", os.path.basename(preferred))
+    else:
+        log.warning("  Compression     : no bzip2-compatible compressor available")
+    log.info("  Compression     : `compress: yes` may still skip compression when the slice looks mostly incompressible")
 
 
 def parse_interval(raw):
@@ -317,6 +361,7 @@ def main():
         log.info("  Auto prefix     : enabled")
     if dump_config:
         log.info("  Dump config     : enabled")
+    log_runtime_tools()
 
     if not os.path.isdir(data_dir):
         log.error("Data directory not found: %s", data_dir)

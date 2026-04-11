@@ -132,6 +132,9 @@ def _read_cfg(source):
     return cfg
 
 
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+
+
 # ---------------------------------------------------------------------------
 # env baseline synthesis
 # ---------------------------------------------------------------------------
@@ -215,6 +218,65 @@ class TestEnvBaseline:
 
         assert cfg.get("provider-local", "type") == "cp"
         assert cfg.get("provider-local", "dest") == "/backups"
+
+
+class TestRuntimeTools:
+    def test_detect_runtime_tools_prefers_lbzip2(self):
+        mapping = {
+            "tar": "/usr/bin/tar",
+            "lbzip2": "/usr/bin/lbzip2",
+            "pbzip2": "/usr/bin/pbzip2",
+            "bzip2": "/usr/bin/bzip2",
+            "gpg": "/usr/bin/gpg",
+            "par2": "/usr/bin/par2",
+        }
+
+        tools = entrypoint._detect_runtime_tools(mapping.get)
+
+        assert tools["tar"] == "/usr/bin/tar"
+        assert tools["lbzip2"] == "/usr/bin/lbzip2"
+        assert tools["bzip2"] == "/usr/bin/bzip2"
+        assert tools["gpg"] == "/usr/bin/gpg"
+        assert tools["par2"] == "/usr/bin/par2"
+        assert tools["preferred_compressor"] == "/usr/bin/lbzip2"
+
+    def test_log_runtime_tools_reports_preferred_compressor(self, caplog):
+        mapping = {
+            "tar": "/usr/bin/tar",
+            "lbzip2": "/usr/bin/lbzip2",
+            "bzip2": "/usr/bin/bzip2",
+            "gpg": "/usr/bin/gpg",
+            "par2": "/usr/bin/par2",
+        }
+
+        with caplog.at_level("INFO"):
+            entrypoint.log_runtime_tools(mapping.get)
+
+        assert "lbzip2" in caplog.text
+        assert "prefer lbzip2" in caplog.text
+        assert "compress: yes" in caplog.text
+
+    def test_log_runtime_tools_warns_when_no_compressor_exists(self, caplog):
+        mapping = {
+            "tar": "/usr/bin/tar",
+            "gpg": "/usr/bin/gpg",
+            "par2": "/usr/bin/par2",
+        }
+
+        with caplog.at_level("INFO"):
+            entrypoint.log_runtime_tools(mapping.get)
+
+        assert "no bzip2-compatible compressor available" in caplog.text
+        assert "missing" in caplog.text
+
+
+def test_dockerfile_installs_required_runtime_tools():
+    dockerfile = os.path.join(REPO_ROOT, "Dockerfile")
+    with open(dockerfile, "r", encoding="utf-8") as fp:
+        content = fp.read()
+
+    for package in ("tar", "lbzip2", "bzip2", "gnupg", "par2", "openssh-client"):
+        assert package in content
 
 
 # ---------------------------------------------------------------------------

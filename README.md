@@ -7,7 +7,7 @@ The design goal for this backup was to leverage known tools and standards, allow
 To that end, this tool uses
 - par2
 - tar
-- bzip2-compatible compressors (`pbzip2`, `lbzip2`, or `bzip2`)
+- bzip2-compatible compressors (`lbzip2`, `pbzip2`, or `bzip2`)
 - gpg
 - json
 
@@ -107,7 +107,7 @@ me, finding cool names (phun intended) for projects is not always easy*
 1. Loads backup database if available
 2. Empties prep directory of any files
 3. Streams the archive through `tar` (recreating directory structure) until no more files are found or the limit is hit. If this wasn't the first run, only new or changed files are added
-4. Depending on options, the tar stream is compressed with a bzip2-compatible compressor (`pbzip2`, `lbzip2`, then `bzip2`)
+4. Depending on options, the tar stream is compressed with a bzip2-compatible compressor (`lbzip2`, `pbzip2`, then `bzip2`)
 5. The archive stream is encrypted with a public key of your choice
 6. The archive stream is signed with a public key of your choice (not necessarily the same as in #5)
 7. A manifest of all files in the archive + checksums is stored as a JSON file
@@ -140,7 +140,9 @@ There, I said it. Enough with disclaimers now :-)
 
 iceshelf is available as a Docker image on the GitHub Container Registry. The
 container automatically discovers backup targets, merges configuration, and runs
-on a configurable schedule with built-in health checking.
+on a configurable schedule with built-in health checking. The image ships the
+runtime tools needed for compression, GPG, parity, and SSH-based providers, and
+intentionally prefers `lbzip2` for compression.
 
 ```bash
 docker pull ghcr.io/mrworf/iceshelf:latest
@@ -153,7 +155,7 @@ See [docker.md](DOCKER.md) for full documentation on running iceshelf in Docker.
 In order to be able to run this, you need a few other parts installed.
 
 - tar - required for backup creation
-- A bzip2-compatible compressor (`pbzip2`, `lbzip2`, or `bzip2`) - required when compression is enabled; iceshelf prefers them in that order
+- A bzip2-compatible compressor (`lbzip2`, `pbzip2`, or `bzip2`) - required when compression is enabled; iceshelf prefers them in that order
 - OpenPGP / GNU Privacy Guard (the `gpg` command-line tool) - for encryption and signatures
 - par2 - Parity tool (optional, only needed for parity support)
 - Python packages: `boto3`, `PyYAML` (install with `pip3 install -r requirements.txt`)

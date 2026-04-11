@@ -454,12 +454,12 @@ def test_all_unavailable_files_becomes_noop(tmp_path):
 
 def test_select_bzip2_compressor_prefers_parallel_variants():
     mapping = {
-        "pbzip2": "/bin/pbzip2",
         "lbzip2": "/bin/lbzip2",
+        "pbzip2": "/bin/pbzip2",
         "bzip2": "/bin/bzip2",
     }
 
-    assert fileutils.select_bzip2_compressor(mapping.get) == "/bin/pbzip2"
-    assert fileutils.select_bzip2_compressor({"lbzip2": "/bin/lbzip2", "bzip2": "/bin/bzip2"}.get) == "/bin/lbzip2"
+    assert fileutils.select_bzip2_compressor(mapping.get) == "/bin/lbzip2"
+    assert fileutils.select_bzip2_compressor({"pbzip2": "/bin/pbzip2", "bzip2": "/bin/bzip2"}.get) == "/bin/pbzip2"
     assert fileutils.select_bzip2_compressor({"bzip2": "/bin/bzip2"}.get) == "/bin/bzip2"
     assert fileutils.select_bzip2_compressor({}.get) is None

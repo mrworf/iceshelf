@@ -44,6 +44,11 @@ services:
 With the layout above the container will run two sequential iceshelf backups
 on every cycle: one for `documents` and one for `photos`.
 
+The official image bundles the runtime tools needed for the archive pipeline:
+`tar`, `lbzip2`, `bzip2`, `gnupg`, `par2`, and `openssh-client`. For
+compression the image intentionally prefers `lbzip2`, with `bzip2` kept as the
+compatibility fallback.
+
 ## Concepts
 
 ### Baseline configuration
@@ -175,6 +180,14 @@ bind-mounted volume for later inspection.
 │   └── checksum.json
 └── inprogress/
 ```
+
+At startup the Docker entrypoint also logs which runtime tools it found and
+which compressor it will prefer. This helps distinguish two different cases:
+
+- no compressor is available, so `compress: force` fails and `compress: yes`
+  cannot compress
+- a compressor is available, but `compress: yes` still skips compression
+  because the current slice looks mostly incompressible
 
 ## Environment variables
 
