@@ -16,6 +16,26 @@ set -e
 # relative paths work regardless of where the test is invoked
 cd "$(dirname "$0")"
 
+SUCCESS=false
+
+cleanup() {
+  rm -rf compare content tmp data done restore restore2
+  rm -f config_restore combined_test.key diff.out
+}
+
+finish() {
+  status=$?
+  if [ $status -eq 0 ] && $SUCCESS; then
+    cleanup
+  else
+    echo -e "\nRestore test failed, output directories preserved for analysis"
+  fi
+}
+
+trap finish EXIT
+
+cleanup
+
 function hasGPGconfig() {
   gpg --list-secret-keys 2>/dev/null | grep test@test.test >/dev/null 2>/dev/null
   return $?
@@ -61,7 +81,7 @@ fi
 for VARIANT in "${VARIATIONS[@]}"; do
   echo "--- Restore variant ${VARIANT} ---"
   # Prepare a fresh backup environment
-  rm -rf content tmp data done restore restore2
+  cleanup
   mkdir content tmp data done restore restore2
   echo "hello restore" > content/file.txt
 
@@ -210,7 +230,6 @@ CONF
 
 done
 
-rm -rf content tmp data done restore restore2 config_restore combined_test.key diff.out
-
 # All variants completed successfully
+SUCCESS=true
 echo "iceshelf-restore test suite completed successfully"

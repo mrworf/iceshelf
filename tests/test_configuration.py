@@ -137,6 +137,7 @@ bukcet = typo
 [options]
 compress = no
 skip broken links = yes
+ignore unavailable files = yes
 
 [provider-cloud]
 type = s3
@@ -298,6 +299,17 @@ loop slices = maybe
         assert parsed is None
         assert "loop slices has to be yes/no" in caplog.text
 
+    def test_ignore_unavailable_files_invalid_value_fails(self, valid_layout, caplog):
+        caplog.set_level(logging.ERROR)
+
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+ignore unavailable files = maybe
+""", caplog=caplog)
+
+        assert parsed is None
+        assert "ignore unavailable files has to be yes/no" in caplog.text
+
 
 class TestParseOptions:
     def test_skip_broken_links_yes_parses_true(self, valid_layout):
@@ -335,3 +347,21 @@ loop slices = no
 
         assert parsed is not None
         assert parsed["loop-slices"] is False
+
+    def test_ignore_unavailable_files_yes_parses_true(self, valid_layout):
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+ignore unavailable files = yes
+""")
+
+        assert parsed is not None
+        assert parsed["ignore-unavailable-files"] is True
+
+    def test_ignore_unavailable_files_no_parses_false(self, valid_layout):
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+ignore unavailable files = no
+""")
+
+        assert parsed is not None
+        assert parsed["ignore-unavailable-files"] is False

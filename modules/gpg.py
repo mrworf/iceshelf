@@ -8,6 +8,7 @@ used by iceshelf, iceshelf-restore and the test suite.
 import os
 import subprocess
 import tempfile
+import time
 
 
 def gpg_env(keyring_dir):
@@ -86,6 +87,56 @@ def cleanup_passphrase_file(passphrase_file):
     _cleanup_passphrase_file(passphrase_file)
 
 
+def _gpg_result_output(result):
+    """Return stderr, falling back to stdout when stderr is empty."""
+    stderr = (result.stderr or '').strip()
+    stdout = (result.stdout or '').strip()
+    if stderr and stdout and stdout not in stderr:
+        return (stderr + '\n' + stdout).strip()
+    return stderr or stdout
+
+
+def _should_retry_gpg_failure(result):
+    """Return True for likely transient agent/setup failures."""
+    if result.returncode == 0:
+        return False
+
+    output = _gpg_result_output(result).lower()
+    if not output:
+        return True
+
+    transient_markers = (
+        'gpg-agent',
+        'no agent running',
+        'failed to start gpg-agent',
+        "can't connect to the gpg-agent",
+        'ipc connect call failed',
+    )
+    return any(marker in output for marker in transient_markers)
+
+
+def _run_gpg(args, *, env, timeout, text=True, input_data=None, retry=False):
+    """Run gpg and optionally retry once on likely transient failures."""
+    attempts = 2 if retry else 1
+    last_result = None
+    for attempt in range(attempts):
+        result = subprocess.run(
+            args,
+            input=input_data,
+            capture_output=True,
+            text=text,
+            env=env,
+            timeout=timeout,
+        )
+        last_result = result
+        if result.returncode == 0:
+            break
+        if attempt + 1 >= attempts or not _should_retry_gpg_failure(result):
+            break
+        time.sleep(0.2)
+    return last_result
+
+
 def build_stream_encrypt_command(recipient, keyring_dir=None, passphrase=None,
                                  armor=False):
     """Return (args, env, passphrase_file) for stdin->stdout encryption."""
@@ -142,14 +193,8 @@ def gpg_decrypt_one(input_path, output_path, keyring_dir, passphrase=None):
         extra, _, passphrase_file = _passphrase_args(passphrase, env)
         args.extend(extra)
         args.append(input_path)
-        result = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=3600,
-        )
-        stderr = (result.stderr or '').strip()
+        result = _run_gpg(args, env=env, timeout=3600, text=True, retry=True)
+        stderr = _gpg_result_output(result)
         return result.returncode == 0, stderr
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)
@@ -296,14 +341,8 @@ def gpg_encrypt_file(input_path, output_path, recipient, keyring_dir=None,
         extra, _, passphrase_file = _passphrase_args(passphrase, env)
         args.extend(extra)
         args.append(input_path)
-        result = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=3600,
-        )
-        stderr = (result.stderr or '').strip()
+        result = _run_gpg(args, env=env, timeout=3600, text=True, retry=True)
+        stderr = _gpg_result_output(result)
         return result.returncode == 0, stderr
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)

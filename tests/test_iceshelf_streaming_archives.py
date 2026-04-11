@@ -64,7 +64,8 @@ def _write_key_file(path):
 
 
 def _write_config(path, source_dir, *, compress="no", encrypt=False, sign=False,
-                  done_dir="default", create_filelist="no", use_key_file=False):
+                  done_dir="default", create_filelist="no", use_key_file=False,
+                  ignore_unavailable_files="no"):
     key_file_path = path.parent / "combined_test.key"
     if use_key_file and (encrypt or sign):
         _write_key_file(key_file_path)
@@ -100,6 +101,7 @@ create paths = yes
 [options]
 compress = {compress}
 create filelist = {create_filelist}
+ignore unavailable files = {ignore_unavailable_files}
 """.strip() + "\n" + ("\n" + "\n".join(security_lines) + "\n" if security_lines else ""))
 
 
@@ -156,7 +158,26 @@ def _archive_files_for_backup(tmp_path, backup_id):
 def _prepare_fake_tool_env(tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    os.symlink("/usr/bin/tar", bin_dir / "tar")
+    fake_tar = bin_dir / "tar"
+    fake_tar.write_text("""#!/usr/bin/python3
+import os
+import subprocess
+import sys
+
+
+to_remove = os.environ.get("ICESHELF_TEST_TAR_REMOVE")
+if to_remove:
+    for path in to_remove.split(os.pathsep):
+        if not path:
+            continue
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+raise SystemExit(subprocess.run(["/usr/bin/tar"] + sys.argv[1:]).returncode)
+""")
+    fake_tar.chmod(0o755)
     os.symlink("/usr/bin/bzip2", bin_dir / "bzip2")
     fake_gpg = bin_dir / "gpg"
     fake_gpg.write_text("""#!/usr/bin/python3
@@ -222,6 +243,11 @@ raise SystemExit(0)
 """)
     fake_gpg.chmod(0o755)
     return {"PATH": str(bin_dir)}
+
+
+def _load_manifest(path):
+    with open(path, "r", encoding="utf-8") as fp:
+        return json.load(fp)
 
 
 def test_archive_filenames_cover_streamed_variants(tmp_path):
@@ -347,6 +373,83 @@ def test_restore_handles_streamed_compressed_encrypted_signed_archive(tmp_path):
     assert restore.returncode == 0, restore.stdout + restore.stderr
     assert (restore_dir / str(source_dir).lstrip(os.sep) / "a.txt").read_text() == "hello world\n"
     assert (restore_dir / str(source_dir).lstrip(os.sep) / "nested" / "b.txt").read_text() == "second file\n"
+
+
+def test_unavailable_file_fails_backup_by_default(tmp_path):
+    source_dir = tmp_path / "source"
+    _create_source_files(source_dir)
+    disappearing = source_dir / "a.txt"
+
+    config_path = tmp_path / "iceshelf.conf"
+    _write_config(config_path, source_dir)
+    extra_env = _prepare_fake_tool_env(tmp_path)
+    extra_env["ICESHELF_TEST_TAR_REMOVE"] = str(disappearing)
+
+    result = _run_iceshelf(config_path, extra_env=extra_env)
+
+    assert result.returncode == 2
+    assert "Archive creation encountered 1 unavailable file(s)" in result.stdout
+    assert not (tmp_path / "data" / "checksum.json").exists()
+    done_dir = tmp_path / "done"
+    assert not done_dir.exists() or list(done_dir.iterdir()) == []
+
+
+def test_ignore_unavailable_files_prunes_manifest_and_state(tmp_path):
+    source_dir = tmp_path / "source"
+    _create_source_files(source_dir)
+    disappearing = source_dir / "a.txt"
+
+    config_path = tmp_path / "iceshelf.conf"
+    _write_config(config_path, source_dir, ignore_unavailable_files="yes")
+    extra_env = _prepare_fake_tool_env(tmp_path)
+    extra_env["ICESHELF_TEST_TAR_REMOVE"] = str(disappearing)
+
+    result = _run_iceshelf(config_path, extra_env=extra_env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Skipping 1 unavailable file(s) during archive creation" in result.stdout
+
+    backup_id = _load_backup_id(tmp_path)
+    backup_dir = tmp_path / "done" / backup_id
+    manifest_path = next(backup_dir.glob(backup_id + ".json*"))
+    manifest = _load_manifest(manifest_path)
+    dataset = _load_manifest(tmp_path / "data" / "checksum.json")["dataset"]
+
+    vanished_key = "/" + str(disappearing).lstrip(os.sep)
+    kept_key = "/" + str(source_dir / "nested" / "b.txt").lstrip(os.sep)
+    assert vanished_key not in manifest["modified"]
+    assert kept_key in manifest["modified"]
+    assert vanished_key not in dataset
+    assert kept_key in dataset
+
+    validate = _run_restore(["--validate", str(manifest_path)], extra_env=extra_env)
+    assert validate.returncode == 0, validate.stdout + validate.stderr
+
+    restore_dir = tmp_path / "restore"
+    restore = _run_restore(["--restore", str(restore_dir), str(manifest_path)], extra_env=extra_env)
+    assert restore.returncode == 0, restore.stdout + restore.stderr
+    assert not (restore_dir / str(disappearing).lstrip(os.sep)).exists()
+    assert (restore_dir / str(source_dir / "nested" / "b.txt").lstrip(os.sep)).read_text() == "second file\n"
+
+
+def test_all_unavailable_files_becomes_noop(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    disappearing = source_dir / "only.txt"
+    disappearing.write_text("bye\n")
+
+    config_path = tmp_path / "iceshelf.conf"
+    _write_config(config_path, source_dir, ignore_unavailable_files="yes")
+    extra_env = _prepare_fake_tool_env(tmp_path)
+    extra_env["ICESHELF_TEST_TAR_REMOVE"] = str(disappearing)
+
+    result = _run_iceshelf(config_path, extra_env=extra_env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "All archive candidates became unavailable, skipping backup" in result.stdout
+    assert not (tmp_path / "data" / "checksum.json").exists()
+    done_dir = tmp_path / "done"
+    assert not done_dir.exists() or list(done_dir.iterdir()) == []
 
 
 def test_select_bzip2_compressor_prefers_parallel_variants():

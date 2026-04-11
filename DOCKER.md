@@ -186,6 +186,7 @@ bind-mounted volume for later inspection.
 | `BACKUP_START_TIME` | *(unset)* | Optional UTC wall-clock time in `HH:MM` format. When set, the first backup is delayed until this time. Combined with `BACKUP_INTERVAL=24h`, backups run daily at a fixed hour. When omitted, the first backup starts as soon as the container is ready. |
 | `ICESHELF_DUMP_CONFIG` | *(unset)* | Set to `1`, `yes`, or `true` to print the full merged configuration for each target to the container log before running iceshelf. Useful for debugging config merging issues. |
 | `ICESHELF_AUTO_PREFIX` | *(unset)* | Set to `1`, `yes`, or `true` to force the backup file prefix to the folder name (e.g. `/data/photos` produces prefix `photos`) even when the config already defines a prefix. When unset, omitted `prefix` values still auto-prefix, but an explicitly blank `prefix:` is preserved. |
+| `CFG_OPTIONS_IGNORE_UNAVAILABLE_FILES` | *(unset)* | Optional Docker baseline default for `ignore unavailable files`. Each folder can still override it in `<folder>/.iceshelf/config`. |
 | `CFG_*` | *(unset)* | Docker-only baseline config override namespace. Example: `CFG_OPTIONS_MAX_SIZE`, `CFG_SECURITY_KEY_FILE`, `CFG_PROVIDER_LOCAL_DEST`. |
 
 ## Health checking
@@ -249,6 +250,7 @@ services:
       CFG_OPTIONS_COMPRESS: "yes"
       CFG_OPTIONS_CHANGE_METHOD: "data"
       CFG_OPTIONS_SKIP_BROKEN_LINKS: "yes"
+      CFG_OPTIONS_IGNORE_UNAVAILABLE_FILES: "yes"
       CFG_SECURITY_KEY_FILE: "/config/iceshelf-keys.asc"
       CFG_PROVIDER_ARCHIVE_TYPE: "s3"
       CFG_PROVIDER_ARCHIVE_BUCKET: "mybucket"
@@ -266,6 +268,15 @@ services:
       timeout: 5s
       start_period: 300s
       retries: 1
+```
+
+Per-folder configs still win over the Docker baseline. For example, if the
+container sets `CFG_OPTIONS_IGNORE_UNAVAILABLE_FILES=yes`, one target can opt
+back into strict behavior with:
+
+```ini
+[options]
+ignore unavailable files: no
 ```
 
 ## Graceful shutdown

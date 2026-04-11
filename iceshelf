@@ -26,6 +26,8 @@
 #
 ################################################################################
 
+import re
+
 def _create_tar_input_list():
   fd, path = tempfile.mkstemp(prefix="iceshelf-tar.")
   try:
@@ -90,6 +92,7 @@ def _run_stream_pipeline(stages, output_path):
   processes = []
   output_handle = None
   current_stage = None
+  stage_results = []
 
   try:
     output_handle = open(output_path, "wb")
@@ -120,13 +123,18 @@ def _run_stream_pipeline(stages, output_path):
       proc.wait()
     stage_name = current_stage["name"] if current_stage is not None else "output"
     logging.error("Unable to start archive pipeline stage \"%s\": %s", stage_name, exc)
-    return False
+    return False, stage_results
 
   success = True
   first_failure = None
   for stage, proc in processes:
     returncode = proc.wait()
     stderr_text = proc.stderr.read().decode("utf-8", errors="replace").strip()
+    stage_results.append({
+      "name": stage["name"],
+      "returncode": returncode,
+      "stderr": stderr_text,
+    })
     failed = returncode != 0
     _log_stage_stderr(stage["name"], stderr_text, failed)
     if failed and success:
@@ -138,7 +146,76 @@ def _run_stream_pipeline(stages, output_path):
     message = stderr_line or "command exited with code %d" % returncode
     logging.error("Archive pipeline stage \"%s\" failed: %s", stage_name, message)
 
-  return success
+  return success, stage_results
+
+
+_TAR_UNAVAILABLE_PATTERNS = (
+  re.compile(r"^[^:]+: (?P<path>.*): Warning: Cannot stat: (?P<reason>.*)$"),
+  re.compile(r"^[^:]+: (?P<path>.*): Cannot open: (?P<reason>.*)$"),
+  re.compile(r"^[^:]+: (?P<path>.*): File removed before we read it$"),
+)
+
+
+def _parse_tar_unavailable_entries(stderr_text):
+  entries = []
+  for raw_line in stderr_text.splitlines():
+    line = raw_line.strip()
+    if not line or "Removing leading `/'" in line:
+      continue
+
+    for pattern in _TAR_UNAVAILABLE_PATTERNS:
+      match = pattern.match(line)
+      if match is None:
+        continue
+      entries.append({
+        "path": os.path.normpath(match.group("path")),
+        "reason": match.groupdict().get("reason") or "File removed before we read it",
+      })
+      break
+  return entries
+
+
+def _prune_unavailable_files(entries):
+  removed = []
+  by_path = {}
+  for filename in newFiles:
+    by_path.setdefault(os.path.normpath(filename), []).append(filename)
+
+  for entry in entries:
+    matches = by_path.get(entry["path"], [])
+    for filename in matches:
+      if filename not in newFiles:
+        continue
+
+      details = currentFileDetails.pop(filename, None)
+      if details is not None:
+        currentOp["filecount"] = max(currentOp["filecount"] - 1, 0)
+        currentOp["filesize"] = max(currentOp["filesize"] - details["size"], 0)
+        if details["compressable"]:
+          currentOp["compressable"] = max(currentOp["compressable"] - details["size"], 0)
+
+      newFiles.pop(filename, None)
+      removed.append({
+        "path": filename,
+        "reason": entry["reason"],
+      })
+
+  return removed
+
+
+def _log_unavailable_file_summary(entries, ignored):
+  if not entries:
+    return
+
+  if ignored:
+    logging.warning("Skipping %d unavailable file(s) during archive creation", len(entries))
+    for entry in entries:
+      logging.warning('Archive skipped "%s": %s', entry["path"], entry["reason"])
+    return
+
+  logging.error("Archive creation encountered %d unavailable file(s)", len(entries))
+  for entry in entries:
+    logging.error('Archive could not read "%s": %s', entry["path"], entry["reason"])
 
 
 def _select_archive_compressor():
@@ -225,7 +302,33 @@ def create_archive(base):
 
     logging.info(
       "Preparing content for archiving, may take quite a while depending on size")
-    if not _run_stream_pipeline(stages, archive):
+    success, stage_results = _run_stream_pipeline(stages, archive)
+
+    tar_result = None
+    for stage_result in stage_results:
+      if stage_result["name"] == "tar":
+        tar_result = stage_result
+        break
+
+    unavailable_entries = []
+    if tar_result is not None:
+      unavailable_entries = _parse_tar_unavailable_entries(tar_result["stderr"])
+
+    if unavailable_entries:
+      if config["ignore-unavailable-files"]:
+        removed_entries = _prune_unavailable_files(unavailable_entries)
+        if len(removed_entries) != len(unavailable_entries):
+          logging.error("Archive reported unavailable files that could not be reconciled with the scan state")
+          _log_unavailable_file_summary(unavailable_entries, ignored=False)
+          _remove_partial_output(archive)
+          return None
+        _log_unavailable_file_summary(removed_entries, ignored=True)
+      else:
+        _log_unavailable_file_summary(unavailable_entries, ignored=False)
+        _remove_partial_output(archive)
+        return None
+
+    if not success:
       _remove_partial_output(archive)
       return None
 
@@ -299,12 +402,20 @@ def gatherData():
     file_archive = create_archive(base)
     if file_archive is None:
       return None
-    havearchive = True
+    if len(newFiles) - len(movedFiles) == 0:
+      _remove_partial_output(file_archive)
+      file_archive = None
+    else:
+      havearchive = True
   else:
     if len(movedFiles):
       logging.info("No files to save, only metadata changes, skipping archive")
     else:
       logging.info("No files to save, skipping archive")
+
+  if len(newFiles) == 0 and len(deletedFiles) == 0:
+    logging.info("All archive candidates became unavailable, skipping backup")
+    return []
 
   if config["manifest"]:
     file_manifest = create_manifest(file_manifest)
@@ -371,6 +482,7 @@ backupSets = {}
 currentOp = {"filecount": 0, "filesize": 0, "compressable" : 0}
 oldVault = None
 handledFilesInRun = set()
+currentFileDetails = {}
 
 incompressable = [
   "jpg", "gif", "mkv", "avi", "mov", "mp4",
@@ -557,8 +669,13 @@ def collectFile(filename):
   if item is None or item["checksum"] == '' or fileutils.hashChanged(filename, item["checksum"], chksum) or cmdline.full:
     currentOp["filecount"] += 1
     currentOp["filesize"] += info.st_size
-    if willCompress(filename):
+    compressable = willCompress(filename)
+    if compressable:
       currentOp["compressable"] += info.st_size
+    currentFileDetails[filename] = {
+      "size": info.st_size,
+      "compressable": compressable,
+    }
     newFiles[filename] = {"checksum" : chksum, "memberof" : [config["unique"]], "deleted": []}
   return True
 
@@ -598,13 +715,14 @@ def collectSources(sources):
 
 
 def resetSliceState():
-  global newFiles, shaFiles, movedFiles, deletedFiles, currentOp
+  global newFiles, shaFiles, movedFiles, deletedFiles, currentOp, currentFileDetails
 
   newFiles = {}
   shaFiles = {}
   movedFiles = {}
   deletedFiles = {}
   currentOp = {"filecount": 0, "filesize": 0, "compressable" : 0}
+  currentFileDetails = {}
 
   for k in oldFiles:
     if oldFiles[k]["checksum"] != '':
@@ -1058,6 +1176,11 @@ while True:
   if files is None:
     logging.error("Failed to gather all data and compress it.")
     sys.exit(2)
+  if len(files) == 0:
+    if completedSlices > 0:
+      sys.exit(0)
+    logging.info("No backup artifacts were created for this run")
+    sys.exit(0)
 
   logGatheredFiles(files)
   if not uploadPreparedFiles(files):

@@ -143,6 +143,7 @@ class TestEnvBaseline:
             "CFG_OPTIONS_CHANGE_METHOD": "data",
             "CFG_OPTIONS_LOOP_SLICES": "no",
             "CFG_OPTIONS_SKIP_BROKEN_LINKS": "yes",
+            "CFG_OPTIONS_IGNORE_UNAVAILABLE_FILES": "yes",
             "CFG_SECURITY_ENCRYPT": "me@example.com",
             "CFG_CUSTOM_PRE_COMMAND": "/usr/local/bin/prep",
         })
@@ -151,6 +152,7 @@ class TestEnvBaseline:
         assert cfg.get("options", "change method") == "data"
         assert cfg.get("options", "loop slices") == "no"
         assert cfg.get("options", "skip broken links") == "yes"
+        assert cfg.get("options", "ignore unavailable files") == "yes"
         assert cfg.get("security", "encrypt") == "me@example.com"
         assert cfg.get("custom", "pre command") == "/usr/local/bin/prep"
 
@@ -254,12 +256,13 @@ class TestMergeConfigs:
     def test_override_wins(self, layout):
         _write_conf(layout["baseline"],
                      "[options]\ncompress: yes\n[provider-s3]\ntype: s3\nbucket: b\n")
-        _write_conf(layout["override"], "[options]\ncompress: no\n")
+        _write_conf(layout["override"], "[options]\ncompress: no\nignore unavailable files: yes\n")
         merged, _ = entrypoint.merge_configs(
             layout["baseline"], layout["override"], layout["folder"], layout["name"]
         )
         cfg = self._read_merged(merged)
         assert cfg.get("options", "compress") == "no"
+        assert cfg.get("options", "ignore unavailable files") == "yes"
 
     def test_new_section_from_override(self, layout):
         _write_conf(layout["override"], "[security]\nencrypt: me@example.com\n")
@@ -376,9 +379,10 @@ class TestMergeConfigs:
 
     def test_env_baseline_overrides_file_values(self, layout):
         _write_conf(layout["baseline"],
-                     "[options]\ncompress: yes\n[provider-local]\ntype: cp\ndest: /old\n")
+                     "[options]\ncompress: yes\nignore unavailable files: no\n[provider-local]\ntype: cp\ndest: /old\n")
         baseline = entrypoint._compose_baseline_config(layout["baseline"], {
             "CFG_OPTIONS_COMPRESS": "no",
+            "CFG_OPTIONS_IGNORE_UNAVAILABLE_FILES": "yes",
             "CFG_PROVIDER_LOCAL_DEST": "/new",
         })
         merged, _ = entrypoint.merge_configs(
@@ -386,7 +390,23 @@ class TestMergeConfigs:
         )
         cfg = self._read_merged(merged)
         assert cfg.get("options", "compress") == "no"
+        assert cfg.get("options", "ignore unavailable files") == "yes"
         assert cfg.get("provider-local", "dest") == "/new"
+
+    def test_folder_override_replaces_env_baseline_option(self, layout):
+        baseline = entrypoint._compose_baseline_config(None, {
+            "CFG_OPTIONS_IGNORE_UNAVAILABLE_FILES": "yes",
+            "CFG_PROVIDER_LOCAL_TYPE": "cp",
+            "CFG_PROVIDER_LOCAL_DEST": "/backups",
+        })
+        _write_conf(layout["override"], "[options]\nignore unavailable files: no\n")
+
+        merged, _ = entrypoint.merge_configs(
+            baseline, layout["override"], layout["folder"], layout["name"]
+        )
+
+        cfg = self._read_merged(merged)
+        assert cfg.get("options", "ignore unavailable files") == "no"
 
     def test_provider_override_replaces_values(self, layout):
         _write_conf(layout["override"],

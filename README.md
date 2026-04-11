@@ -333,6 +333,19 @@ This applies only to broken symlinks. Other file access problems still fail the 
 
 *default is `no`*
 
+#### ignore unavailable files
+
+If `yes`, iceshelf will log a warning and skip files that were discovered during
+scan but become unavailable while `tar` is building the archive. This is meant
+for cases where files are moved or disappear between scan and archive creation.
+
+This applies only to archive-time `tar` read/open/stat failures. Scan-time
+inspection and hashing errors still fail the run. Skipped files are removed from
+the manifest and local backup database so restore metadata stays consistent with
+what actually made it into the archive.
+
+*default is `no`*
+
 #### create filelist
 
 Adds an additional file, called `filelist.txt` which is a shasum compatible file which details the hash of each file in the backup (the produced backup files, not the backed up files) as well as their corresponding sha1 which can be checked with shasum, like so `shasum -c filelist.txt`. This is to tell you what files belong to the backup. It's used by iceshelf-restore. File will also be signed if signature is enabled (see security).
@@ -534,7 +547,7 @@ Depending on what happened during the run, iceshelf will return the following ex
 
 1 = Configuration issue
 
-2 = Unable to gather all data, meaning that while creating the archive to upload, some kind of I/O related error happened. The log should give you an idea of what. Can happen when files disappear during archive creation
+2 = Unable to gather all data, meaning that while creating the archive to upload, some kind of I/O related error happened. The log should give you an idea of what. Can happen when files disappear during archive creation unless `ignore unavailable files` is enabled
 
 3 = Remaining files are larger than the effective `max size`, so they can never fit in a slice
 
