@@ -7,6 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 from modules import fileutils
+from modules import helper
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
@@ -65,7 +66,8 @@ def _write_key_file(path):
 
 def _write_config(path, source_dir, *, compress="no", encrypt=False, sign=False,
                   done_dir="default", create_filelist="no", use_key_file=False,
-                  ignore_unavailable_files="no"):
+                  ignore_unavailable_files="no", show_delta="no",
+                  detect_move="no"):
     key_file_path = path.parent / "combined_test.key"
     if use_key_file and (encrypt or sign):
         _write_key_file(key_file_path)
@@ -102,6 +104,8 @@ create paths = yes
 compress = {compress}
 create filelist = {create_filelist}
 ignore unavailable files = {ignore_unavailable_files}
+show delta = {show_delta}
+detect move = {detect_move}
 """.strip() + "\n" + ("\n" + "\n".join(security_lines) + "\n" if security_lines else ""))
 
 
@@ -450,6 +454,91 @@ def test_all_unavailable_files_becomes_noop(tmp_path):
     assert not (tmp_path / "data" / "checksum.json").exists()
     done_dir = tmp_path / "done"
     assert not done_dir.exists() or list(done_dir.iterdir()) == []
+
+
+def test_show_delta_logs_new_changed_and_deleted_before_archiving(tmp_path):
+    source_dir = tmp_path / "source"
+    _create_source_files(source_dir)
+
+    config_path = tmp_path / "iceshelf.conf"
+    _write_config(config_path, source_dir, show_delta="yes")
+
+    first = _run_iceshelf(config_path)
+    assert first.returncode == 0, first.stdout + first.stderr
+
+    added_path = source_dir / "brand_new.txt"
+    changed_path = source_dir / "a.txt"
+    deleted_path = source_dir / "nested" / "b.txt"
+
+    added_path.write_text("brand new file\n")
+    changed_path.write_text("updated content\n")
+    os.unlink(deleted_path)
+
+    result = _run_iceshelf(config_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Detected delta:" in result.stdout
+    assert f"deleted  {deleted_path}" in result.stdout
+    assert f"new {helper.formatSize(added_path.stat().st_size)} {added_path}" in result.stdout
+    assert f"changed {helper.formatSize(changed_path.stat().st_size)} {changed_path}" in result.stdout
+    assert result.stdout.index("Detected delta:") < result.stdout.index("Setting up the prep directory")
+
+
+def test_show_delta_with_no_changes_keeps_normal_noop_behavior(tmp_path):
+    source_dir = tmp_path / "source"
+    _create_source_files(source_dir)
+
+    config_path = tmp_path / "iceshelf.conf"
+    _write_config(config_path, source_dir, show_delta="yes")
+
+    first = _run_iceshelf(config_path)
+    assert first.returncode == 0, first.stdout + first.stderr
+
+    result = _run_iceshelf(config_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Detected delta:" in result.stdout
+    assert "No backup artifacts were created for this run" in result.stdout
+
+
+def test_show_delta_logs_detected_renames_and_moves(tmp_path):
+    source_dir = tmp_path / "source"
+    _create_source_files(source_dir)
+    rename_only_src = source_dir / "rename-only.txt"
+    rename_only_src.write_text("rename me\n")
+
+    config_path = tmp_path / "iceshelf.conf"
+    _write_config(config_path, source_dir, show_delta="yes", detect_move="yes")
+
+    first = _run_iceshelf(config_path)
+    assert first.returncode == 0, first.stdout + first.stderr
+
+    rename_src = source_dir / "a.txt"
+    rename_dst = source_dir / "renamed.txt"
+    rename_src.rename(rename_dst)
+
+    rename_only_dst = source_dir / "rename-only-new.txt"
+    rename_only_src.rename(rename_only_dst)
+
+    move_src = source_dir / "nested" / "b.txt"
+    move_dir = source_dir / "other"
+    move_dir.mkdir()
+    move_dst = move_dir / "b.txt"
+    move_src.rename(move_dst)
+
+    combo_src = rename_dst
+    combo_dir = source_dir / "elsewhere"
+    combo_dir.mkdir()
+    combo_dst = combo_dir / "final.txt"
+    combo_src.rename(combo_dst)
+
+    result = _run_iceshelf(config_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Detected delta:" in result.stdout
+    assert f"renamed {helper.formatSize(rename_only_dst.stat().st_size)} {rename_only_src} -> {rename_only_dst}" in result.stdout
+    assert f"moved {helper.formatSize(move_dst.stat().st_size)} {move_src} -> {move_dst}" in result.stdout
+    assert f"renamed+moved {helper.formatSize(combo_dst.stat().st_size)} {source_dir / 'a.txt'} -> {combo_dst}" in result.stdout
 
 
 def test_select_bzip2_compressor_prefers_parallel_variants():

@@ -749,6 +749,55 @@ def detectMoves():
     deletedFiles.pop(k, None)
 
 
+def _delta_action_for_move(oldpath, newpath):
+  olddir, oldname = os.path.split(oldpath)
+  newdir, newname = os.path.split(newpath)
+
+  renamed = oldname != newname
+  moved = olddir != newdir
+
+  if renamed and moved:
+    return "renamed+moved"
+  if renamed:
+    return "renamed"
+  return "moved"
+
+
+def logDeltaBeforeArchiving():
+  action_order = {
+    "deleted": 0,
+    "new": 1,
+    "changed": 2,
+    "renamed": 3,
+    "moved": 4,
+    "renamed+moved": 5,
+  }
+  rows = []
+
+  for path in deletedFiles:
+    rows.append(("deleted", "", path))
+
+  for path in newFiles:
+    size = helper.formatSize(currentFileDetails[path]["size"])
+    if path in movedFiles:
+      oldpath = movedFiles[path]
+      action = _delta_action_for_move(oldpath, path)
+      rows.append((action, size, oldpath + " -> " + path))
+    elif path not in oldFiles:
+      rows.append(("new", size, path))
+    else:
+      rows.append(("changed", size, path))
+
+  rows.sort(key=lambda row: (action_order[row[0]], row[2]))
+
+  logging.info("Detected delta:")
+  for action, size, paths in rows:
+    if size:
+      logging.info("%s %s %s", action, size, paths)
+    else:
+      logging.info("%s  %s", action, paths)
+
+
 def logDetectedChangesAndExit():
   logging.info("Detected changes:")
   for k in deletedFiles:
@@ -1158,6 +1207,9 @@ while True:
 
   if cmdline.changes:
     logDetectedChangesAndExit()
+
+  if config["show-delta"]:
+    logDeltaBeforeArchiving()
 
   if len(newFiles) == 0 and missedFiles is not None:
     sys.exit(handleOnlyOverlimitFiles(missedFiles))

@@ -138,6 +138,7 @@ bukcet = typo
 compress = no
 skip broken links = yes
 ignore unavailable files = yes
+show delta = yes
 
 [provider-cloud]
 type = s3
@@ -365,3 +366,21 @@ ignore unavailable files = no
 
         assert parsed is not None
         assert parsed["ignore-unavailable-files"] is False
+
+    def test_show_delta_yes_parses_true(self, valid_layout):
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+show delta = yes
+""")
+
+        assert parsed is not None
+        assert parsed["show-delta"] is True
+
+    def test_show_delta_no_parses_false(self, valid_layout):
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+show delta = no
+""")
+
+        assert parsed is not None
+        assert parsed["show-delta"] is False

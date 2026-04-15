@@ -72,6 +72,7 @@ Docker-specific env vars use this naming scheme:
 - `CFG_OPTIONS_LOOP_SLICES` -> `[options] loop slices`
 - `CFG_OPTIONS_CHANGE_METHOD` -> `[options] change method`
 - `CFG_OPTIONS_SKIP_BROKEN_LINKS` -> `[options] skip broken links`
+- `CFG_OPTIONS_SHOW_DELTA` -> `[options] show delta`
 - `CFG_SECURITY_ENCRYPT` -> `[security] encrypt`
 - `CFG_CUSTOM_PRE_COMMAND` -> `[custom] pre command`
 - `CFG_PROVIDER_LOCAL_TYPE` -> `[provider-local] type`
@@ -200,6 +201,7 @@ which compressor it will prefer. This helps distinguish two different cases:
 | `ICESHELF_DUMP_CONFIG` | *(unset)* | Set to `1`, `yes`, or `true` to print the full merged configuration for each target to the container log before running iceshelf. Useful for debugging config merging issues. |
 | `ICESHELF_AUTO_PREFIX` | *(unset)* | Set to `1`, `yes`, or `true` to force the backup file prefix to the folder name (e.g. `/data/photos` produces prefix `photos`) even when the config already defines a prefix. When unset, omitted `prefix` values still auto-prefix, but an explicitly blank `prefix:` is preserved. |
 | `CFG_OPTIONS_IGNORE_UNAVAILABLE_FILES` | *(unset)* | Optional Docker baseline default for `ignore unavailable files`. Each folder can still override it in `<folder>/.iceshelf/config`. |
+| `CFG_OPTIONS_SHOW_DELTA` | *(unset)* | Optional Docker baseline default for `show delta`. Each folder can still override it in `<folder>/.iceshelf/config`. |
 | `CFG_*` | *(unset)* | Docker-only baseline config override namespace. Example: `CFG_OPTIONS_MAX_SIZE`, `CFG_SECURITY_KEY_FILE`, `CFG_PROVIDER_LOCAL_DEST`. |
 
 ## Health checking

@@ -348,6 +348,21 @@ what actually made it into the archive.
 
 *default is `no`*
 
+#### show delta
+
+If `yes`, iceshelf prints the detected changes for the current run after scan
+and change detection but before archive creation starts, then continues with the
+backup normally.
+
+Each line is printed as `action size path`, or `action size oldpath -> newpath`
+for rename and move detection. Deleted entries intentionally leave the size
+blank because the local database does not store historical file sizes.
+
+Possible actions are `new`, `changed`, `deleted`, `renamed`, `moved`, and
+`renamed+moved`.
+
+*default is `no`*
+
 #### create filelist
 
 Adds an additional file, called `filelist.txt` which is a shasum compatible file which details the hash of each file in the backup (the produced backup files, not the backed up files) as well as their corresponding sha1 which can be checked with shasum, like so `shasum -c filelist.txt`. This is to tell you what files belong to the backup. It's used by iceshelf-restore. File will also be signed if signature is enabled (see security).
