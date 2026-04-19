@@ -377,15 +377,28 @@ You define rules the same way you do sources, by name=rule, for example:
 
 ```
 no zip files=*.zip
-no cache=/home/user/cache
+no cache tree=/home/user/cache/*
 ...
 ```
 
-In the simplest form, the rule is simply a definition of what the filename (including path) is starting with. If this matches, it's excluded. All rules are CaSe-InSeNsItIvE.
+Rules are matched against the full path of each file. In the simplest form, a rule is an exact path match. Matching is case-sensitive by default.
 
 #### Prefixes
 
-You can however make it more complex by using prefixes. By prefixing the rule with a star (*) the rule will match starting from the end. By prefixing with a questionmark (?) the rule will match any file containing the rule. Finally you can also use less-than or more-than (&lt; or &gt;) followed by a size to exclude by size only.
+You can however make it more expressive with wildcards and modifiers:
+
+- `foo*` matches any path starting with `foo`
+- `*foo` matches any path ending with `foo`
+- `?foo` matches any path containing `foo`
+- `*foo*` also matches any path containing `foo`
+- `&lt;123` or `&gt;123` excludes by size only
+
+You can also add modifiers before the pattern. Prefix order is flexible, so `^?/MyFolder/` and `?^/MyFolder/` mean the same thing.
+
+- `!` inverts the rule and makes it inclusive instead
+- `^` makes the match CaSe-InSeNsItIvE
+
+Finally, use `\` to escape special characters when you need them literally. This includes `!`, `^`, `?`, `*`, `&lt;`, `&gt;`, and `\` itself.
 
 But wait, there's more. You can on top of these prefixes add an additional prefix (a pre-prefix) in the shape of an exclamationmark. This will *invert* the rule and make it inclusive instead.
 
@@ -395,7 +408,7 @@ Consider the following:
 ```
 [exclude]
 alldocs=!*.doc
-no odd dirs=/some/odd/dir/
+no odd dirs=/some/odd/dir/*
 ```
 
 In a structure like this:
@@ -421,7 +434,7 @@ Notice how it snagged a file from inside an excluded folder? Pretty convenient. 
 
 ```
 [exclude]
-no odd dirs=/some/odd/dir/
+no odd dirs=/some/odd/dir/*
 alldocs=!*.doc
 ```
 
@@ -605,6 +618,8 @@ If this turns out to be a major concern/issue, I'll revisit this question.
 Using the `--list sets` option, iceshelf will list the necessary backups you need to restore and in the order to do it. If a file was moved, the tool will display what the original name was and what the new name is supposed to be.
 
 There is also a tool called [iceshelf-restore](README.iceshelf-restore.md) which you can use to more easily extract a backup. The tool can validate or restore a backup directly from the files and will attempt repairs if parity data is available. 
+
+`iceshelf-restore --analyze <backup-or-folder>` can also inspect manifests only and report churn-heavy file lifecycles plus folders with transient traffic. This analysis is action-only because manifests do not contain file sizes. Use `--analyze-activity <count-or-percent>` to control the minimum activity threshold.
 
 ## After doing some development on the code, how will I know something didn't break?
 

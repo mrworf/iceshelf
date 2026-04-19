@@ -384,3 +384,103 @@ show delta = no
 
         assert parsed is not None
         assert parsed["show-delta"] is False
+
+
+class TestExcludeRules:
+    def test_parse_inlines_external_exclude_rules(self, valid_layout):
+        exclude_rules = valid_layout["config"].parent / "exclude.rules"
+        exclude_rules.write_text("# comment\n*.tmp\n^?/Mixed/Case/\n")
+
+        parsed = _parse(valid_layout, extra_sections=f"""
+[exclude]
+exact file = {valid_layout["source"]}
+external file = |{exclude_rules}
+""")
+
+        assert parsed is not None
+        assert parsed["exclude"] == [
+            str(valid_layout["source"]),
+            "*.tmp",
+            "^?/Mixed/Case/",
+        ]
+
+    def test_exact_rule_matches_full_path_only(self, valid_layout):
+        configuration.setting["exclude"] = [str(valid_layout["source"])]
+
+        assert configuration.isExcluded(str(valid_layout["source"])) is True
+        assert configuration.isExcluded(str(valid_layout["source"]) + ".bak") is False
+
+    def test_trailing_star_matches_prefix(self):
+        configuration.setting["exclude"] = ["/tmp/report*"]
+
+        assert configuration.isExcluded("/tmp/report-2026.txt") is True
+        assert configuration.isExcluded("/tmp/other-report.txt") is False
+
+    def test_leading_star_matches_suffix(self):
+        configuration.setting["exclude"] = ["*.doc"]
+
+        assert configuration.isExcluded("/tmp/readme.doc") is True
+        assert configuration.isExcluded("/tmp/readme.doc.bak") is False
+
+    def test_contains_match_supports_questionmark_and_star_forms(self):
+        configuration.setting["exclude"] = ["?/.cache/", "*temp*"]
+
+        assert configuration.isExcluded("/home/user/.cache/file.txt") is True
+        assert configuration.isExcluded("/home/user/report-temp-file.txt") is True
+        assert configuration.isExcluded("/home/user/report.txt") is False
+
+    def test_case_insensitive_modifier_supports_flexible_prefix_order(self):
+        configuration.setting["exclude"] = ["^?/MyFolder/", "*^.DOC"]
+
+        assert configuration.isExcluded("/tmp/myfolder/file.txt") is True
+        assert configuration.isExcluded("/tmp/report.doc") is True
+        assert configuration.isExcluded("/tmp/report.DOCX") is False
+
+    def test_invert_rule_still_uses_first_matching_rule(self):
+        configuration.setting["exclude"] = ["!/tmp/keep-me.txt", "/tmp/*"]
+
+        assert configuration.isExcluded("/tmp/keep-me.txt") is False
+        assert configuration.isExcluded("/tmp/drop-me.txt") is True
+
+    def test_literal_escaping_supports_special_characters(self):
+        configuration.setting["exclude"] = [
+            r"\*literal",
+            r"prefix\*",
+            r"\?question",
+            r"\^caret",
+            r"\!bang",
+            r"slash\\name",
+        ]
+
+        assert configuration.isExcluded("*literal") is True
+        assert configuration.isExcluded("prefix*") is True
+        assert configuration.isExcluded("?question") is True
+        assert configuration.isExcluded("^caret") is True
+        assert configuration.isExcluded("!bang") is True
+        assert configuration.isExcluded(r"slash\name") is True
+        assert configuration.isExcluded("prefix-value") is False
+
+    def test_escaped_leading_or_trailing_star_remains_literal(self):
+        configuration.setting["exclude"] = [r"\*foo*", r"foo\*", r"\*foo\*"]
+
+        assert configuration.isExcluded("*foobar") is True
+        assert configuration.isExcluded("foo*") is True
+        assert configuration.isExcluded("*foo*") is True
+        assert configuration.isExcluded("foobar") is False
+
+    def test_size_rules_continue_to_work(self, tmp_path):
+        small = tmp_path / "small.txt"
+        big = tmp_path / "big.txt"
+        small.write_text("tiny")
+        big.write_text("this is definitely longer")
+
+        configuration.setting["exclude"] = [">10", "<5"]
+
+        assert configuration.isExcluded(str(small)) is True
+        assert configuration.isExcluded(str(big)) is True
+
+    def test_invalid_size_rule_still_fails(self):
+        configuration.setting["exclude"] = [">ten"]
+
+        with pytest.raises(SystemExit):
+            configuration.isExcluded("/tmp/example")

@@ -1,6 +1,7 @@
 """Helpers shared by iceshelf-restore and its unit tests."""
 
 import logging
+import math
 import os
 import os.path
 import re
@@ -237,3 +238,300 @@ def prepare_parity_for_repair(basepath, archive_filename, parity_files, keyring_
     except Exception:
         shutil.rmtree(repair_dir)
         raise
+
+
+def normalize_manifest_path(path):
+    """Normalize a manifest path to a leading-slash POSIX-like form."""
+    if not path:
+        return '/'
+    normalized = path.replace('\\', '/')
+    if not normalized.startswith('/'):
+        normalized = '/' + normalized
+    normalized = os.path.normpath(normalized).replace('\\', '/')
+    if not normalized.startswith('/'):
+        normalized = '/' + normalized
+    return normalized.rstrip('/') or '/'
+
+
+def manifest_parent_backup(manifest):
+    """Return parent backup id from manifest (lastbackup or previousbackup)."""
+    return manifest.get('lastbackup') or manifest.get('previousbackup')
+
+
+def normalize_moved_entry(info, backup_id):
+    """Normalize a manifest moved entry to dict form."""
+    if isinstance(info, dict):
+        return {
+            'original': info.get('original', ''),
+            'reference': info.get('reference', backup_id),
+        }
+    return {'original': info if isinstance(info, str) else '', 'reference': backup_id}
+
+
+def parse_analysis_threshold(raw_value, total_actions):
+    """Parse --analyze-activity value and resolve it against total_actions."""
+    if raw_value is None:
+        raw_value = '10%'
+    value = str(raw_value).strip()
+    if not value:
+        raise ValueError('activity threshold cannot be empty')
+
+    is_percent = value.endswith('%')
+    number_text = value[:-1] if is_percent else value
+    if not number_text:
+        raise ValueError('activity threshold is missing a numeric value')
+    try:
+        parsed_value = int(number_text)
+    except ValueError as exc:
+        raise ValueError(
+            'activity threshold must be an integer or a percentage such as 10%'
+        ) from exc
+
+    clipped_value = max(parsed_value, 1)
+    if is_percent:
+        threshold = int(math.ceil((total_actions * clipped_value) / 100.0)) if total_actions > 0 else 1
+        return {
+            'input': value,
+            'kind': 'percent',
+            'value': clipped_value,
+            'threshold': max(threshold, 1),
+            'display': '%d%% of %d actions' % (clipped_value, total_actions),
+        }
+
+    return {
+        'input': value,
+        'kind': 'absolute',
+        'value': clipped_value,
+        'threshold': clipped_value,
+        'display': '%d action(s)' % clipped_value,
+    }
+
+
+def _path_folder(path):
+    """Return the normalized parent folder for a manifest path."""
+    return os.path.dirname(normalize_manifest_path(path)) or '/'
+
+
+def _new_lifecycle(checksum):
+    """Create a lifecycle tracker for one checksum."""
+    return {
+        'checksum': checksum,
+        'latest_path': None,
+        'paths': set(),
+        'modification_count': 0,
+        'deletion_count': 0,
+        'backups_touched': set(),
+        'current_folder': None,
+        'active': False,
+        'pending_folder_modifications': {},
+    }
+
+
+def analyze_manifest_history(manifests_by_basename):
+    """Build manifest-only lifecycle and transient-folder analysis."""
+    lifecycles = {}
+    active_paths = {}
+    folders = {}
+    total_actions = 0
+    skipped_modified_without_checksum = 0
+
+    for backup_id, manifest in manifests_by_basename.items():
+        modified = manifest.get('modified', {}) or {}
+        deleted = manifest.get('deleted', []) or []
+        moved = manifest.get('moved', {}) or {}
+        total_actions += len(modified) + len(deleted)
+
+        for raw_path, meta in modified.items():
+            path = normalize_manifest_path(raw_path)
+            checksum = meta.get('checksum', '')
+            if not checksum:
+                skipped_modified_without_checksum += 1
+                continue
+
+            lifecycle = lifecycles.get(checksum)
+            if lifecycle is None:
+                lifecycle = _new_lifecycle(checksum)
+                lifecycles[checksum] = lifecycle
+
+            if not lifecycle['active']:
+                lifecycle['pending_folder_modifications'] = {}
+            previous_path = lifecycle.get('latest_path')
+            if previous_path and previous_path != path and active_paths.get(previous_path) == checksum:
+                active_paths.pop(previous_path, None)
+
+            folder = _path_folder(path)
+            lifecycle['latest_path'] = path
+            lifecycle['paths'].add(path)
+            lifecycle['modification_count'] += 1
+            lifecycle['backups_touched'].add(backup_id)
+            lifecycle['current_folder'] = folder
+            lifecycle['active'] = True
+            lifecycle['pending_folder_modifications'][folder] = (
+                lifecycle['pending_folder_modifications'].get(folder, 0) + 1
+            )
+            active_paths[path] = checksum
+
+        for raw_newpath, info in moved.items():
+            newpath = normalize_manifest_path(raw_newpath)
+            normalized = normalize_moved_entry(info, backup_id)
+            oldpath = normalize_manifest_path(normalized.get('original', ''))
+
+            checksum = ''
+            if newpath in modified:
+                checksum = modified[newpath].get('checksum', '')
+            if not checksum:
+                checksum = active_paths.get(oldpath, '')
+            if not checksum:
+                continue
+
+            lifecycle = lifecycles.get(checksum)
+            if lifecycle is None:
+                lifecycle = _new_lifecycle(checksum)
+                lifecycles[checksum] = lifecycle
+
+            if oldpath != '/' or normalized.get('original', ''):
+                lifecycle['paths'].add(oldpath)
+            lifecycle['paths'].add(newpath)
+            lifecycle['backups_touched'].add(backup_id)
+            lifecycle['latest_path'] = newpath
+            lifecycle['current_folder'] = _path_folder(newpath)
+            lifecycle['active'] = True
+            if active_paths.get(oldpath) == checksum:
+                active_paths.pop(oldpath, None)
+            active_paths[newpath] = checksum
+
+        for raw_path in deleted:
+            path = normalize_manifest_path(raw_path)
+            checksum = active_paths.pop(path, None)
+            if not checksum:
+                continue
+
+            lifecycle = lifecycles.get(checksum)
+            if lifecycle is None:
+                continue
+
+            folder = _path_folder(path)
+            lifecycle['latest_path'] = path
+            lifecycle['paths'].add(path)
+            lifecycle['deletion_count'] += 1
+            lifecycle['backups_touched'].add(backup_id)
+            lifecycle['current_folder'] = folder
+            lifecycle['active'] = False
+
+            folder_modified = lifecycle['pending_folder_modifications'].get(folder, 0)
+            folder_info = folders.setdefault(folder, {
+                'path': folder,
+                'action_count': 0,
+                'modification_count': 0,
+                'deletion_count': 0,
+                'lifecycles': set(),
+            })
+            folder_info['action_count'] += folder_modified + 1
+            folder_info['modification_count'] += folder_modified
+            folder_info['deletion_count'] += 1
+            folder_info['lifecycles'].add(checksum)
+
+            lifecycle['pending_folder_modifications'] = {}
+
+    file_items = []
+    for lifecycle in lifecycles.values():
+        action_count = lifecycle['modification_count'] + lifecycle['deletion_count']
+        display_path = lifecycle['latest_path'] or lifecycle['checksum']
+        file_items.append({
+            'checksum': lifecycle['checksum'],
+            'display_path': display_path,
+            'action_count': action_count,
+            'modification_count': lifecycle['modification_count'],
+            'deletion_count': lifecycle['deletion_count'],
+            'path_count': len(lifecycle['paths']),
+            'exclude_rule': display_path,
+            'active': lifecycle['active'],
+            'backups_touched': len(lifecycle['backups_touched']),
+        })
+
+    folder_items = []
+    for folder, info in folders.items():
+        folder_items.append({
+            'display_path': folder,
+            'action_count': info['action_count'],
+            'modification_count': info['modification_count'],
+            'deletion_count': info['deletion_count'],
+            'transient_lifecycles': len(info['lifecycles']),
+            'exclude_rule': folder if folder == '/' else folder.rstrip('/') + '/',
+        })
+
+    file_items.sort(key=lambda item: (-item['action_count'], item['display_path']))
+    folder_items.sort(key=lambda item: (-item['action_count'], item['display_path']))
+
+    return {
+        'total_actions': total_actions,
+        'backup_count': len(manifests_by_basename),
+        'file_items': file_items,
+        'folder_items': folder_items,
+        'skipped_modified_without_checksum': skipped_modified_without_checksum,
+    }
+
+
+def format_manifest_analysis(report, threshold_info):
+    """Format manifest analysis output as display-ready lines."""
+    total_actions = report.get('total_actions', 0)
+    threshold = threshold_info.get('threshold', 1)
+
+    def action_share(action_count):
+        if total_actions <= 0:
+            return '0.0%'
+        return '%.1f%%' % ((100.0 * action_count) / total_actions)
+
+    def select_items(items):
+        return [item for item in items if item.get('action_count', 0) >= threshold]
+
+    file_items = select_items(report.get('file_items', []))
+    folder_items = select_items(report.get('folder_items', []))
+    lines = [
+        'Manifest analysis summary:',
+        '  backups analyzed: %d' % report.get('backup_count', 0),
+        '  manifest actions: %d' % total_actions,
+        '  activity threshold: %d (%s)' % (threshold, threshold_info.get('display', '')),
+    ]
+
+    skipped = report.get('skipped_modified_without_checksum', 0)
+    if skipped:
+        lines.append('  skipped modified entries without checksum: %d' % skipped)
+
+    lines.append('Frequently changing file lifecycles:')
+    if not file_items:
+        lines.append('  No items met the activity threshold.')
+    else:
+        for item in file_items:
+            parts = [
+                '  %s' % item['display_path'],
+                'actions=%d' % item['action_count'],
+                'share=%s' % action_share(item['action_count']),
+                'modified=%d' % item['modification_count'],
+                'deleted=%d' % item['deletion_count'],
+            ]
+            if item.get('path_count', 0) > 1:
+                parts.append('paths=%d' % item['path_count'])
+            parts.append('exclude=%s' % item['exclude_rule'])
+            lines.append(' | '.join(parts))
+
+    lines.append('Transient folders:')
+    if not folder_items:
+        lines.append('  No items met the activity threshold.')
+    else:
+        for item in folder_items:
+            lines.append(
+                '  %s | actions=%d | share=%s | modified=%d | deleted=%d | '
+                'lifecycles=%d | exclude=%s'
+                % (
+                    item['display_path'],
+                    item['action_count'],
+                    action_share(item['action_count']),
+                    item['modification_count'],
+                    item['deletion_count'],
+                    item['transient_lifecycles'],
+                    item['exclude_rule'],
+                )
+            )
+
+    return lines

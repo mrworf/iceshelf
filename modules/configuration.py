@@ -489,61 +489,122 @@ def which(program):
 
     return None
 
+def _rule_has_unescaped_trailing_star(v):
+  if len(v) == 0 or v[-1] != "*":
+    return False
+
+  bs = 0
+  i = len(v) - 2
+  while i >= 0 and v[i] == "\\":
+    bs += 1
+    i -= 1
+  return (bs % 2) == 0
+
+def _rule_unescape(v):
+  result = []
+  i = 0
+  while i < len(v):
+    if v[i] == "\\" and i + 1 < len(v):
+      i += 1
+    result.append(v[i])
+    i += 1
+  return "".join(result)
+
+def _parseExcludeRule(v):
+  invert = False
+  ignorecase = False
+  contain = False
+  fromend = False
+  fromstart = False
+  lessthan = None
+  morethan = None
+
+  i = 0
+  while i < len(v):
+    if v[i] == "\\":
+      break
+    elif v[i] == "!":
+      invert = True
+    elif v[i] == "^":
+      ignorecase = True
+    elif v[i] == "?":
+      contain = True
+    elif v[i] == "*":
+      fromend = True
+    else:
+      break
+    i += 1
+
+  value = v[i:]
+
+  if len(value) > 0 and value[0] != "\\" and value[0] in ["<", ">"] and not contain and not fromend:
+    compare = value[0]
+    value = value[1:]
+    if value.isdigit():
+      if compare == "<":
+        lessthan = int(value)
+      else:
+        morethan = int(value)
+      value = ""
+    else:
+      if compare == "<":
+        logging.error("\"Less than\" exclude rule can only have digits")
+      else:
+        logging.error("\"More than\" exclude rule can only have digits")
+      sys.exit(2)
+  else:
+    if _rule_has_unescaped_trailing_star(value):
+      if fromend or contain:
+        contain = True
+      else:
+        fromstart = True
+      value = value[:-1]
+
+  return {
+    "invert": invert,
+    "ignorecase": ignorecase,
+    "contain": contain,
+    "fromend": fromend,
+    "fromstart": fromstart,
+    "lessthan": lessthan,
+    "morethan": morethan,
+    "value": _rule_unescape(value),
+  }
+
 def isExcluded(f):
   if setting["exclude"] is None:
     return False
 
-  fl = f.lower()
   for v in setting["exclude"]:
-    ov=v
-    invert = False
-    fromend = False
-    contain = False
+    ov = v
     match = False
-    lessthan = None
-    morethan = None
-    if v[0] != "\\":
-      if v[0] == "!":
-        invert = True
-        v = v[1:]
-      if v[0] != "\\":
-        if v[0] == "*":
-          fromend = True
-          v = v[1:]
-        elif v[0] == "?":
-          contain = True
-          v = v[1:]
-        elif v[0] == "<":
-          v = v[1:]
-          if v.isdigit():
-            lessthan = int(v)
-          else:
-            logging.error("\"Less than\" exclude rule can only have digits")
-            sys.exit(2)
-        elif v[0] == ">":
-          v = v[1:]
-          if v.isdigit():
-            morethan = int(v)
-          else:
-            logging.error("\"More than\" exclude rule can only have digits")
-            sys.exit(2)
-      else: # No special filter at the start (after invert)
-        v = v[1:]
-    else: # No special filter at the start
-      v = v[1:]
+    rule = _parseExcludeRule(v)
 
-    if morethan or lessthan:
+    if rule["morethan"] is not None or rule["lessthan"] is not None:
       # Expensive, we need to stat
       i = os.stat(f)
-      if morethan is not None and i.st_size > morethan:
+      if rule["morethan"] is not None and i.st_size > rule["morethan"]:
         match = True
-      elif lessthan is not None and i.st_size < lessthan:
+      elif rule["lessthan"] is not None and i.st_size < rule["lessthan"]:
         match = True
     else:
-      match = (fromend and fl.endswith(v)) or (contain and v in fl) or (fl.startswith(v))
+      fv = f
+      rv = rule["value"]
+      if rule["ignorecase"]:
+        fv = fv.casefold()
+        rv = rv.casefold()
+
+      if rule["contain"]:
+        match = rv in fv
+      elif rule["fromend"]:
+        match = fv.endswith(rv)
+      elif rule["fromstart"]:
+        match = fv.startswith(rv)
+      else:
+        match = fv == rv
 
     if match:
-      if invert: # Special case, it matches, so stop processing, but DON'T EXCLUDE IT
+      if rule["invert"]: # Special case, it matches, so stop processing, but DON'T EXCLUDE IT
         logging.debug("Rule \"%s\" matched \"%s\", not excluded", ov, f)
         return False
       else: # Normal case, matched, so should be excluded
