@@ -16,6 +16,7 @@ iceshelf-restore requires the **gpg** binary (GnuPG command-line tool) to be ins
 - Initial validation of files using a filelist (`.lst`/`.lst.asc` or legacy `filelist.txt`) if available (will still confirm signatures)
 - Can attempt parity repair using `--repair`
 - Use a key from a file with `--key-file` (key is not written to your keyring)
+- Manifest-only analysis mode with `--analyze` for churn-heavy files and transient folders
 - Multi-archive restore: when a folder contains multiple backups, list them or restore all in order with `--all`
 - Conflict handling when a file already exists at the destination (`--conflict`; default: skip if same content, abort if different)
 - Resumable restore: progress is recorded in `.restore/completed.lst`; re-run to skip already-extracted files (single- and multi-archive)
@@ -35,6 +36,19 @@ Use `--key-file PATH` to verify or decrypt using a key stored in a file (e.g. an
 ## Listing the contents
 
 Adding `--list` will print the contents of the backup as specified by the manifest, including the parent backup (if available). `--list` only works when a single backup is selected (e.g. by specifying a backup prefix or file); if you point at a directory that contains multiple backups, the tool lists the backup names and exits without showing manifest contents.
+
+## Analyzing manifests
+
+Add `--analyze` to inspect manifest history without restoring files. This mode works from manifests only, so it does not need archive contents and it does not estimate byte savings. It reports:
+
+- file lifecycles that change often
+- folders with transient traffic, where content appears and is later deleted
+
+Lifecycle tracking is checksum-based. When the same checksum shows up under a different filename, `iceshelf-restore` treats that as the same lifecycle and keeps the latest known path for later delete matching. If multiple files share the same checksum at the same time, analysis treats them as one lifecycle.
+
+Use `--analyze-activity THRESHOLD` to control what gets reported. The threshold may be an integer action count or a percentage such as `10%`. Values of `0` are clipped to `1`. Percentages are computed against the total number of manifest actions (`modified` plus `deleted`) across the analyzed backups.
+
+When you point `--analyze` at a directory, it analyzes every manifest-backed backup in that directory in chronological order. Unlike restore mode, this does not require `--all`.
 
 ## Validating the backup
 
@@ -80,6 +94,7 @@ Use `--logfile FILE` to write log output to a file instead of stdout.
 
 - **No partial restore:** Restore is all-or-nothing per backup (or full chain with `--all`); there is no option to restore only selected paths or globs.
 - **No path remapping:** Restore destination is a single root; backup paths cannot be mapped to different locations.
+- **Manifest-only analysis:** `--analyze` reports activity counts only. Current manifests do not contain file sizes, so it cannot estimate backup-byte savings.
 - **Moved files in single-backup mode:** With a single backup, entries in the manifest’s "moved" section are only reported in the audit report, not applied; use `--all` with a directory of backups to apply renames.
 - **When repair is not possible:** The tool’s `--repair` option works when PAR2 parity files exist and are sufficient. If the archive is corrupt and PAR2 files are missing, or PAR2 repair fails, the tool can only report the problem; there is no other recovery path.
 - **Disk full / very large restores:** Both single- and multi-archive restore are resumable via `completed.lst`; on rerun, already-extracted files are skipped. Single-archive may decrypt the archive again but only missing files are restored. There is no special handling for out-of-disk (restore may fail partway; re-run to resume).

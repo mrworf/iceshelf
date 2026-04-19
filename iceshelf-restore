@@ -405,6 +405,19 @@ def get_all_backup_basenames(base_dir):
     return restorable
 
 
+def determine_backup_basename(files):
+    """Return the backup basename for a matched backup file set."""
+    basename = None
+    for entry in files:
+        for suffix in MANIFEST_SUFFIXES + ARCHIVE_SUFFIXES:
+            if entry.endswith(suffix):
+                basename = entry[:-len(suffix)]
+                break
+        if basename:
+            break
+    return basename
+
+
 def getBackupFiles(itemFromBackup):
     """Locate all files belonging to a backup based on a path or prefix.
     Returns (backup_dir, matched_files, all_basenames).
@@ -563,6 +576,47 @@ def detect_leftovers(basepath, basename, manifest_path, archive_path, filelist_p
 def _parent_backup(manifest):
     """Return parent backup id from manifest (lastbackup or previousbackup)."""
     return manifest.get('lastbackup') or manifest.get('previousbackup')
+
+
+def run_manifest_analysis(basepath, basenames, keyring_dir, activity_setting):
+    """Load manifests, analyze their activity, and print the report."""
+    manifests_by_basename = {}
+    work_dir = tempfile.mkdtemp(prefix='iceshelf-restore.')
+    try:
+        for basename in basenames:
+            manifest_path = get_manifest_file(basepath, basename)
+            if not manifest_path:
+                logging.error('Backup "%s" missing manifest', basename)
+                return 1
+            if not validate_file(manifest_path, keyring_dir):
+                logging.error(
+                    'Manifest validation failed for "%s". Ensure it is signed with a key in your keyring.',
+                    os.path.basename(manifest_path))
+                return 1
+            stripped_manifest, strip_err = strip_file(manifest_path, keyring_dir, work_dir=work_dir)
+            if stripped_manifest is None:
+                logging.error(
+                    'Unable to process manifest "%s": %s',
+                    os.path.basename(manifest_path),
+                    strip_err or 'decryption or signature verification failed')
+                return 1
+            try:
+                with open(stripped_manifest, encoding='utf-8') as fp:
+                    manifests_by_basename[basename] = json.load(fp)
+            except (OSError, json.JSONDecodeError) as exc:
+                logging.error('Unable to load manifest "%s": %s', os.path.basename(manifest_path), exc)
+                return 1
+
+        report = restoreutils.analyze_manifest_history(manifests_by_basename)
+        threshold = restoreutils.parse_analysis_threshold(activity_setting, report['total_actions'])
+        for line in restoreutils.format_manifest_analysis(report, threshold):
+            logging.info('%s', line)
+        return 0
+    finally:
+        try:
+            shutil.rmtree(work_dir)
+        except OSError:
+            pass
 
 
 def get_chain_gaps(basepath, all_basenames, keyring_dir, config):
@@ -1361,6 +1415,16 @@ parser.add_argument(
     default=None,
     help='Extracts the backup')
 parser.add_argument(
+    '--analyze',
+    action='store_true',
+    default=False,
+    help='Analyze manifest history to find churn-heavy files and transient folders')
+parser.add_argument(
+    '--analyze-activity',
+    metavar='THRESHOLD',
+    default='10%',
+    help='Activity threshold for --analyze, as an integer action count or percentage')
+parser.add_argument(
     '--restore-temp-dir',
     metavar="DIR",
     default=None,
@@ -1431,6 +1495,16 @@ parser.add_argument(
     help="Path to backup prefix or file")
 cmdline = parser.parse_args()
 
+if cmdline.analyze and (cmdline.restore or cmdline.list or cmdline.validate or cmdline.repair or cmdline.all):
+    parser.error('--analyze cannot be combined with --restore, --list, --validate, --repair, or --all')
+if cmdline.analyze_activity != '10%' and not cmdline.analyze:
+    parser.error('--analyze-activity requires --analyze')
+if cmdline.analyze:
+    try:
+        restoreutils.parse_analysis_threshold(cmdline.analyze_activity, 0)
+    except ValueError as exc:
+        parser.error(str(exc))
+
 restore_base = cmdline.restore or ""
 
 
@@ -1442,6 +1516,8 @@ if cmdline.list:
     mode.append('list')
 if cmdline.repair:
     mode.append('repair')
+if cmdline.analyze:
+    mode.append('analyze')
 if cmdline.restore:
     mode.append('restore')
 if getattr(cmdline, 'verbose', False):
@@ -1545,6 +1621,22 @@ try:
     logging.info('Located backup in "%s"', basepath)
     logging.info('Detected backup files: %s', ', '.join(files))
 
+    if cmdline.analyze:
+        if all_basenames is not None:
+            if not all_basenames:
+                logging.error('No manifest-backed backups found in "%s"', basepath)
+                sys.exit(1)
+            sys.exit(run_manifest_analysis(basepath, all_basenames, keyring_dir, cmdline.analyze_activity))
+
+        basename = determine_backup_basename(files)
+        if not basename:
+            logging.error('Could not determine backup basename from files')
+            sys.exit(1)
+        if not get_manifest_file(basepath, basename):
+            logging.error('No manifest found, unable to analyze')
+            sys.exit(1)
+        sys.exit(run_manifest_analysis(basepath, [basename], keyring_dir, cmdline.analyze_activity))
+
     if cmdline.all and (all_basenames is None or len(all_basenames) <= 1):
         logging.warning('--all ignored (backup path is a single backup, not a directory of backups)')
         cmdline.all = False
@@ -1576,14 +1668,7 @@ try:
         sys.exit(0)
 
     # Resolve basename from files (established patterns only)
-    basename = None
-    for f in files:
-        for suffix in MANIFEST_SUFFIXES + ARCHIVE_SUFFIXES:
-            if f.endswith(suffix):
-                basename = f[:-len(suffix)]
-                break
-        if basename:
-            break
+    basename = determine_backup_basename(files)
     if not basename:
         logging.error('Could not determine backup basename from files')
         sys.exit(1)
