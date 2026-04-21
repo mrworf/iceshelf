@@ -30,6 +30,8 @@ import re
 
 def _create_tar_input_list():
   fd, path = tempfile.mkstemp(prefix="iceshelf-tar.")
+  sent_filenames = []
+  by_path = {}
   try:
     with os.fdopen(fd, "wb") as fp:
       for filename in newFiles:
@@ -37,13 +39,15 @@ def _create_tar_input_list():
           continue
         fp.write(os.fsencode(filename))
         fp.write(b"\0")
+        sent_filenames.append(filename)
+        by_path.setdefault(os.path.normpath(filename), []).append(filename)
   except Exception:
     try:
       os.unlink(path)
     except OSError:
       pass
     raise
-  return path
+  return path, sent_filenames, by_path
 
 
 def _first_stderr_line(stderr_text):
@@ -175,42 +179,92 @@ def _parse_tar_unavailable_entries(stderr_text):
   return entries
 
 
-def _prune_unavailable_files(entries):
+def _match_unreconciled_entry(entry, by_path, sent_filenames):
+  entry_path = entry["path"]
+
+  for filename in sent_filenames:
+    if filename == entry_path:
+      return filename
+
+  candidate_normpaths = set()
+  entry_sep = entry_path + os.sep
+  for norm, originals in by_path.items():
+    norm_sep = norm + os.sep
+    if norm.endswith(entry_sep) or entry_path.endswith(norm_sep):
+      candidate_normpaths.add(norm)
+      continue
+    if norm.endswith(os.sep + entry_path) or entry_path.endswith(os.sep + norm):
+      candidate_normpaths.add(norm)
+
+  if len(candidate_normpaths) == 1:
+    norm = next(iter(candidate_normpaths))
+    originals = by_path.get(norm, [])
+    if len(originals) == 1:
+      return originals[0]
+
+  return None
+
+
+def _drop_newfile(filename, reason, unreconciled_resolved=False):
+  details = currentFileDetails.pop(filename, None)
+  if details is not None:
+    currentOp["filecount"] = max(currentOp["filecount"] - 1, 0)
+    currentOp["filesize"] = max(currentOp["filesize"] - details["size"], 0)
+    if details["compressable"]:
+      currentOp["compressable"] = max(currentOp["compressable"] - details["size"], 0)
+
+  newFiles.pop(filename, None)
+  return {
+    "path": filename,
+    "reason": reason,
+    "unreconciled_resolved": unreconciled_resolved,
+  }
+
+
+def _prune_unavailable_files(entries, by_path, sent_filenames, tolerate=False):
   removed = []
-  by_path = {}
-  for filename in newFiles:
-    by_path.setdefault(os.path.normpath(filename), []).append(filename)
+  unresolved = []
 
   for entry in entries:
     matches = by_path.get(entry["path"], [])
+    matched_any = False
     for filename in matches:
       if filename not in newFiles:
         continue
+      removed.append(_drop_newfile(filename, entry["reason"]))
+      matched_any = True
 
-      details = currentFileDetails.pop(filename, None)
-      if details is not None:
-        currentOp["filecount"] = max(currentOp["filecount"] - 1, 0)
-        currentOp["filesize"] = max(currentOp["filesize"] - details["size"], 0)
-        if details["compressable"]:
-          currentOp["compressable"] = max(currentOp["compressable"] - details["size"], 0)
+    if matched_any:
+      continue
 
-      newFiles.pop(filename, None)
-      removed.append({
-        "path": filename,
-        "reason": entry["reason"],
-      })
+    if tolerate:
+      resolved = _match_unreconciled_entry(entry, by_path, sent_filenames)
+      if resolved is not None and resolved in newFiles:
+        removed.append(_drop_newfile(resolved, entry["reason"], unreconciled_resolved=True))
+        continue
 
-  return removed
+    unresolved.append(entry)
+
+  return removed, unresolved
 
 
-def _log_unavailable_file_summary(entries, ignored):
+def _log_unavailable_file_summary(entries, mode):
   if not entries:
     return
 
-  if ignored:
+  if mode == "ignored":
     logging.warning("Skipping %d unavailable file(s) during archive creation", len(entries))
     for entry in entries:
       logging.warning('Archive skipped "%s": %s', entry["path"], entry["reason"])
+    return
+
+  if mode == "tolerated":
+    logging.warning(
+      "Archive proceeded despite %d unreconcilable unavailable file(s); "
+      "state left unchanged for these paths. Re-run the backup until no such warnings appear.",
+      len(entries))
+    for entry in entries:
+      logging.warning('Archive tolerated unreconcilable "%s": %s', entry["path"], entry["reason"])
     return
 
   logging.error("Archive creation encountered %d unavailable file(s)", len(entries))
@@ -257,7 +311,7 @@ def create_archive(base):
   tar_input = None
   passphrase_files = []
   try:
-    tar_input = _create_tar_input_list()
+    tar_input, sent_filenames, tar_by_path = _create_tar_input_list()
     stages = [{
       "name": "tar",
       "cmd": [
@@ -316,15 +370,22 @@ def create_archive(base):
 
     if unavailable_entries:
       if config["ignore-unavailable-files"]:
-        removed_entries = _prune_unavailable_files(unavailable_entries)
-        if len(removed_entries) != len(unavailable_entries):
+        tolerate = config["tolerate-unreconcilable-files"]
+        removed_entries, unresolved_entries = _prune_unavailable_files(
+          unavailable_entries, tar_by_path, sent_filenames, tolerate=tolerate)
+
+        if unresolved_entries and not tolerate:
           logging.error("Archive reported unavailable files that could not be reconciled with the scan state")
-          _log_unavailable_file_summary(unavailable_entries, ignored=False)
+          _log_unavailable_file_summary(unavailable_entries, mode="error")
           _remove_partial_output(archive)
           return None
-        _log_unavailable_file_summary(removed_entries, ignored=True)
+
+        if removed_entries:
+          _log_unavailable_file_summary(removed_entries, mode="ignored")
+        if unresolved_entries:
+          _log_unavailable_file_summary(unresolved_entries, mode="tolerated")
       else:
-        _log_unavailable_file_summary(unavailable_entries, ignored=False)
+        _log_unavailable_file_summary(unavailable_entries, mode="error")
         _remove_partial_output(archive)
         return None
 

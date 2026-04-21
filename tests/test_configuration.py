@@ -311,6 +311,17 @@ ignore unavailable files = maybe
         assert parsed is None
         assert "ignore unavailable files has to be yes/no" in caplog.text
 
+    def test_tolerate_unreconcilable_files_invalid_value_fails(self, valid_layout, caplog):
+        caplog.set_level(logging.ERROR)
+
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+tolerate unreconcilable files = maybe
+""", caplog=caplog)
+
+        assert parsed is None
+        assert "tolerate unreconcilable files has to be yes/no" in caplog.text
+
 
 class TestParseOptions:
     def test_skip_broken_links_yes_parses_true(self, valid_layout):
@@ -366,6 +377,40 @@ ignore unavailable files = no
 
         assert parsed is not None
         assert parsed["ignore-unavailable-files"] is False
+
+    def test_tolerate_unreconcilable_files_yes_parses_true(self, valid_layout):
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+ignore unavailable files = yes
+tolerate unreconcilable files = yes
+""")
+
+        assert parsed is not None
+        assert parsed["tolerate-unreconcilable-files"] is True
+        assert parsed["ignore-unavailable-files"] is True
+
+    def test_tolerate_unreconcilable_files_no_parses_false(self, valid_layout):
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+tolerate unreconcilable files = no
+""")
+
+        assert parsed is not None
+        assert parsed["tolerate-unreconcilable-files"] is False
+
+    def test_tolerate_without_ignore_warns_but_parses(self, valid_layout, caplog):
+        caplog.set_level(logging.WARNING)
+
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+ignore unavailable files = no
+tolerate unreconcilable files = yes
+""", caplog=caplog)
+
+        assert parsed is not None
+        assert parsed["tolerate-unreconcilable-files"] is True
+        assert parsed["ignore-unavailable-files"] is False
+        assert "tolerate unreconcilable files has no effect" in caplog.text
 
     def test_show_delta_yes_parses_true(self, valid_layout):
         parsed = _parse(valid_layout, extra_sections="""

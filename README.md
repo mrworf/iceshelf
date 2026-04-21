@@ -348,6 +348,31 @@ what actually made it into the archive.
 
 *default is `no`*
 
+#### tolerate unreconcilable files
+
+If `yes` (and `ignore unavailable files` is also `yes`), iceshelf will keep
+going even when `tar` reports an unavailable file whose path cannot be matched
+back to the scan state. A best-effort reconciliation is attempted first; any
+remaining entries are logged as warnings and the archive is still written and
+uploaded.
+
+This is useful for live data sets where files shift around during the backup
+window (e.g. mail servers, queues, spool directories). For such a path:
+
+- If it was part of a previous backup, the local state is left untouched so
+  restore metadata keeps pointing at the last good archive — it is treated as
+  if the file never changed in this run.
+- If it was new to this run, it is simply not recorded, as if it had not been
+  scanned.
+
+A follow-up backup run will rescan and either record the current state of the
+file correctly or observe that it has been deleted/moved. It is recommended to
+run the backup again until no such warnings appear.
+
+This option has no effect unless `ignore unavailable files` is also enabled.
+
+*default is `no`*
+
 #### show delta
 
 If `yes`, iceshelf prints the detected changes for the current run after scan
@@ -577,7 +602,7 @@ Depending on what happened during the run, iceshelf will return the following ex
 
 1 = Configuration issue
 
-2 = Unable to gather all data, meaning that while creating the archive to upload, some kind of I/O related error happened. The log should give you an idea of what. Can happen when files disappear during archive creation unless `ignore unavailable files` is enabled
+2 = Unable to gather all data, meaning that while creating the archive to upload, some kind of I/O related error happened. The log should give you an idea of what. Can happen when files disappear during archive creation unless `ignore unavailable files` is enabled. When `tar` reports unavailable paths that cannot be matched back to the scan state, the run also exits with 2 unless `tolerate unreconcilable files` is enabled
 
 3 = Remaining files are larger than the effective `max size`, so they can never fit in a slice
 

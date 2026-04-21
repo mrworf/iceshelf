@@ -66,7 +66,9 @@ def _write_key_file(path):
 
 def _write_config(path, source_dir, *, compress="no", encrypt=False, sign=False,
                   done_dir="default", create_filelist="no", use_key_file=False,
-                  ignore_unavailable_files="no", show_delta="no",
+                  ignore_unavailable_files="no",
+                  tolerate_unreconcilable_files="no",
+                  show_delta="no",
                   detect_move="no"):
     key_file_path = path.parent / "combined_test.key"
     if use_key_file and (encrypt or sign):
@@ -104,6 +106,7 @@ create paths = yes
 compress = {compress}
 create filelist = {create_filelist}
 ignore unavailable files = {ignore_unavailable_files}
+tolerate unreconcilable files = {tolerate_unreconcilable_files}
 show delta = {show_delta}
 detect move = {detect_move}
 """.strip() + "\n" + ("\n" + "\n".join(security_lines) + "\n" if security_lines else ""))
@@ -178,6 +181,15 @@ if to_remove:
             os.unlink(path)
         except FileNotFoundError:
             pass
+
+unreconciled = os.environ.get("ICESHELF_TEST_TAR_UNRECONCILED")
+if unreconciled:
+    for path in unreconciled.split(os.pathsep):
+        if not path:
+            continue
+        sys.stderr.write(
+            "tar: %s: Warning: Cannot stat: No such file or directory\\n" % path)
+    sys.stderr.flush()
 
 raise SystemExit(subprocess.run(["/usr/bin/tar"] + sys.argv[1:]).returncode)
 """)
@@ -454,6 +466,103 @@ def test_all_unavailable_files_becomes_noop(tmp_path):
     assert not (tmp_path / "data" / "checksum.json").exists()
     done_dir = tmp_path / "done"
     assert not done_dir.exists() or list(done_dir.iterdir()) == []
+
+
+def test_unreconcilable_entry_fails_without_tolerate(tmp_path):
+    source_dir = tmp_path / "source"
+    _create_source_files(source_dir)
+
+    config_path = tmp_path / "iceshelf.conf"
+    _write_config(config_path, source_dir, ignore_unavailable_files="yes")
+    extra_env = _prepare_fake_tool_env(tmp_path)
+    extra_env["ICESHELF_TEST_TAR_UNRECONCILED"] = "/tmp/ghost-transient-file.tmp"
+
+    result = _run_iceshelf(config_path, extra_env=extra_env)
+
+    assert result.returncode == 2
+    assert "could not be reconciled with the scan state" in result.stdout
+    assert not (tmp_path / "data" / "checksum.json").exists()
+    done_dir = tmp_path / "done"
+    assert not done_dir.exists() or list(done_dir.iterdir()) == []
+
+
+def test_tolerate_unreconcilable_lets_backup_proceed(tmp_path):
+    source_dir = tmp_path / "source"
+    _create_source_files(source_dir)
+
+    config_path = tmp_path / "iceshelf.conf"
+    _write_config(
+        config_path,
+        source_dir,
+        ignore_unavailable_files="yes",
+        tolerate_unreconcilable_files="yes",
+    )
+    extra_env = _prepare_fake_tool_env(tmp_path)
+    ghost_path = "/tmp/ghost-transient-file.tmp"
+    extra_env["ICESHELF_TEST_TAR_UNRECONCILED"] = ghost_path
+
+    result = _run_iceshelf(config_path, extra_env=extra_env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Archive proceeded despite 1 unreconcilable unavailable file(s)" in result.stdout
+    assert "Re-run the backup until no such warnings appear" in result.stdout
+    assert "could not be reconciled with the scan state" not in result.stdout
+
+    backup_id = _load_backup_id(tmp_path)
+    dataset = _load_manifest(tmp_path / "data" / "checksum.json")["dataset"]
+
+    kept_keys = {
+        "/" + str(source_dir / "a.txt").lstrip(os.sep),
+        "/" + str(source_dir / "nested" / "b.txt").lstrip(os.sep),
+    }
+    for key in kept_keys:
+        assert key in dataset, "expected %s to be recorded; dataset keys=%s" % (key, list(dataset))
+    assert ghost_path not in dataset
+    assert not any(key.endswith("ghost-transient-file.tmp") for key in dataset)
+
+    backup_dir = tmp_path / "done" / backup_id
+    assert backup_dir.exists()
+    manifest_path = next(backup_dir.glob(backup_id + ".json*"))
+    manifest = _load_manifest(manifest_path)
+    for key in kept_keys:
+        assert key in manifest["modified"]
+    assert ghost_path not in manifest["modified"]
+
+
+def test_tolerate_unreconcilable_reconciles_previously_backed_up_path(tmp_path):
+    source_dir = tmp_path / "source"
+    _create_source_files(source_dir)
+    changing = source_dir / "a.txt"
+
+    config_path = tmp_path / "iceshelf.conf"
+    _write_config(
+        config_path,
+        source_dir,
+        ignore_unavailable_files="yes",
+        tolerate_unreconcilable_files="yes",
+    )
+
+    first = _run_iceshelf(config_path)
+    assert first.returncode == 0, first.stdout + first.stderr
+    first_dataset = _load_manifest(tmp_path / "data" / "checksum.json")["dataset"]
+    changing_key = "/" + str(changing).lstrip(os.sep)
+    first_checksum = first_dataset[changing_key]["checksum"]
+    first_memberof = list(first_dataset[changing_key]["memberof"])
+
+    changing.write_text("modified content for second run\n")
+
+    extra_env = _prepare_fake_tool_env(tmp_path)
+    extra_env["ICESHELF_TEST_TAR_UNRECONCILED"] = "/tmp/ghost-second-run.tmp"
+
+    result = _run_iceshelf(config_path, extra_env=extra_env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Archive proceeded despite 1 unreconcilable unavailable file(s)" in result.stdout
+
+    second_dataset = _load_manifest(tmp_path / "data" / "checksum.json")["dataset"]
+    assert changing_key in second_dataset
+    assert second_dataset[changing_key]["checksum"] != first_checksum
+    assert set(first_memberof).issubset(set(second_dataset[changing_key]["memberof"]))
 
 
 def test_show_delta_logs_new_changed_and_deleted_before_archiving(tmp_path):

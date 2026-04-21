@@ -201,6 +201,7 @@ which compressor it will prefer. This helps distinguish two different cases:
 | `ICESHELF_DUMP_CONFIG` | *(unset)* | Set to `1`, `yes`, or `true` to print the full merged configuration for each target to the container log before running iceshelf. Useful for debugging config merging issues. |
 | `ICESHELF_AUTO_PREFIX` | *(unset)* | Set to `1`, `yes`, or `true` to force the backup file prefix to the folder name (e.g. `/data/photos` produces prefix `photos`) even when the config already defines a prefix. When unset, omitted `prefix` values still auto-prefix, but an explicitly blank `prefix:` is preserved. |
 | `CFG_OPTIONS_IGNORE_UNAVAILABLE_FILES` | *(unset)* | Optional Docker baseline default for `ignore unavailable files`. Each folder can still override it in `<folder>/.iceshelf/config`. |
+| `CFG_OPTIONS_TOLERATE_UNRECONCILABLE_FILES` | *(unset)* | Optional Docker baseline default for `tolerate unreconcilable files`. Only takes effect when `ignore unavailable files` is also enabled. Each folder can still override it in `<folder>/.iceshelf/config`. |
 | `CFG_OPTIONS_SHOW_DELTA` | *(unset)* | Optional Docker baseline default for `show delta`. Each folder can still override it in `<folder>/.iceshelf/config`. |
 | `CFG_*` | *(unset)* | Docker-only baseline config override namespace. Example: `CFG_OPTIONS_MAX_SIZE`, `CFG_SECURITY_KEY_FILE`, `CFG_PROVIDER_LOCAL_DEST`. |
 

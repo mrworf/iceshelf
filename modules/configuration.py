@@ -31,6 +31,7 @@ setting = {
   "skip-empty": False,
   "skip-broken-links": False,
   "ignore-unavailable-files": False,
+  "tolerate-unreconcilable-files": False,
   "show-delta": False,
   "encrypt-manifest" : True,
   "create-filelist" : True,
@@ -60,6 +61,7 @@ CONFIG_SECTION_DEFAULTS = {
     "skip empty": "no",
     "skip broken links": "no",
     "ignore unavailable files": "no",
+    "tolerate unreconcilable files": "no",
     "show delta": "no",
     "ignore overlimit": "no",
     "change method": "sha1",
@@ -286,6 +288,15 @@ def parse(filename, onlysecurity=False):
     return None
   elif config.get("options", "ignore unavailable files").lower() == "yes":
     setting["ignore-unavailable-files"] = True
+
+  if config.get("options", "tolerate unreconcilable files").lower() not in ["yes", "no"]:
+    logging.error("tolerate unreconcilable files has to be yes/no")
+    return None
+  elif config.get("options", "tolerate unreconcilable files").lower() == "yes":
+    setting["tolerate-unreconcilable-files"] = True
+    if not setting["ignore-unavailable-files"]:
+      logging.warning(
+        "tolerate unreconcilable files has no effect unless ignore unavailable files is also enabled")
 
   if config.get("options", "show delta").lower() not in ["yes", "no"]:
     logging.error("show delta has to be yes/no")
