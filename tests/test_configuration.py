@@ -322,6 +322,17 @@ tolerate unreconcilable files = maybe
         assert parsed is None
         assert "tolerate unreconcilable files has to be yes/no" in caplog.text
 
+    def test_upload_activity_log_invalid_value_fails(self, valid_layout, caplog):
+        caplog.set_level(logging.ERROR)
+
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+upload activity log = maybe
+""", caplog=caplog)
+
+        assert parsed is None
+        assert "upload activity log has to be yes/no" in caplog.text
+
 
 class TestParseOptions:
     def test_skip_broken_links_yes_parses_true(self, valid_layout):
@@ -429,6 +440,24 @@ show delta = no
 
         assert parsed is not None
         assert parsed["show-delta"] is False
+
+    def test_upload_activity_log_yes_parses_true(self, valid_layout):
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+upload activity log = yes
+""")
+
+        assert parsed is not None
+        assert parsed["upload-activity-log"] is True
+
+    def test_upload_activity_log_no_parses_false(self, valid_layout):
+        parsed = _parse(valid_layout, extra_sections="""
+[options]
+upload activity log = no
+""")
+
+        assert parsed is not None
+        assert parsed["upload-activity-log"] is False
 
 
 class TestExcludeRules:

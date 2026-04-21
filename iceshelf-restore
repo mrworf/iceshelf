@@ -29,6 +29,7 @@ from modules import restoreutils
 MANIFEST_SUFFIXES = restoreutils.MANIFEST_SUFFIXES
 ARCHIVE_SUFFIXES = restoreutils.ARCHIVE_SUFFIXES
 FILELIST_SUFFIXES = restoreutils.FILELIST_SUFFIXES
+ACTIVITY_LOG_SUFFIXES = restoreutils.ACTIVITY_LOG_SUFFIXES
 get_manifest_file = restoreutils.get_manifest_file
 get_archive_file = restoreutils.get_archive_file
 get_filelist_file = restoreutils.get_filelist_file
@@ -437,7 +438,7 @@ def getBackupFiles(itemFromBackup):
 
     if basename and '.' in basename:
         # Resolve base by stripping known iceshelf suffixes
-        for suffix in MANIFEST_SUFFIXES + ARCHIVE_SUFFIXES + FILELIST_SUFFIXES:
+        for suffix in MANIFEST_SUFFIXES + ARCHIVE_SUFFIXES + FILELIST_SUFFIXES + ACTIVITY_LOG_SUFFIXES:
             if basename.endswith(suffix):
                 candidate = basename[:-len(suffix)]
                 if (get_manifest_file(backup_dir, candidate) or

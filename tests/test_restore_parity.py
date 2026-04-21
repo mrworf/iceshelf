@@ -177,6 +177,27 @@ def test_get_files_for_basename_supports_signed_archive_and_signed_parity(tmp_pa
     ]
 
 
+def test_get_files_for_basename_includes_activity_log_sidecar(tmp_path):
+    basename = "backup"
+    backup_dir = tmp_path
+    for name in (
+        "backup.json",
+        "backup.tar",
+        "backup.lst",
+        "backup.activity.log.bz2.gpg.asc",
+    ):
+        (backup_dir / name).write_text("x")
+
+    found = restoreutils.get_files_for_basename(str(backup_dir), basename)
+
+    assert found == [
+        "backup.json",
+        "backup.tar",
+        "backup.lst",
+        "backup.activity.log.bz2.gpg.asc",
+    ]
+
+
 def test_valid_archive_treats_corrupt_archive_with_parity_as_repairable(tmp_path, caplog):
     manifest = tmp_path / "backup.json"
     archive = tmp_path / "backup.tar"

@@ -33,6 +33,7 @@ setting = {
   "ignore-unavailable-files": False,
   "tolerate-unreconcilable-files": False,
   "show-delta": False,
+  "upload-activity-log": False,
   "encrypt-manifest" : True,
   "create-filelist" : True,
   "checkupdate" : False,
@@ -63,6 +64,7 @@ CONFIG_SECTION_DEFAULTS = {
     "ignore unavailable files": "no",
     "tolerate unreconcilable files": "no",
     "show delta": "no",
+    "upload activity log": "no",
     "ignore overlimit": "no",
     "change method": "sha1",
     "max keep": "0",
@@ -303,6 +305,12 @@ def parse(filename, onlysecurity=False):
     return None
   elif config.get("options", "show delta").lower() == "yes":
     setting["show-delta"] = True
+
+  if config.get("options", "upload activity log").lower() not in ["yes", "no"]:
+    logging.error("upload activity log has to be yes/no")
+    return None
+  elif config.get("options", "upload activity log").lower() == "yes":
+    setting["upload-activity-log"] = True
 
   if config.get("options", "change method").lower() not in [ "data", "sha1", "sha256", "sha512"]:
     logging.error("Change method has to be data, sha1, sha256 or sha512 (meta is deprecated)")

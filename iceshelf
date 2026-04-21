@@ -453,10 +453,83 @@ def add_parity(path):
   return fileutils.generateParity(path, config["parity"])
 
 
+def _prepared_file_priority(filename):
+  if ".activity.log.bz2" in filename:
+    return 0
+  if ".tar" in filename and ".par2" not in filename:
+    return 1
+  if ".json" in filename:
+    return 2
+  if ".par2" in filename:
+    return 3
+  if ".lst" in filename:
+    return 4
+  return 5
+
+
+def _prepared_files():
+  return sorted(
+    os.listdir(config["prepdir"]),
+    key=lambda name: (_prepared_file_priority(name), name),
+  )
+
+
+def create_activity_log_artifact(base):
+  if log_session is None:
+    logging.error("Unable to create activity log artifact without an active logging session")
+    return None
+
+  source_path = log_session.artifact_source_path
+  if not source_path:
+    logging.error("Unable to create activity log artifact because no logfile source exists")
+    return None
+
+  snapshot_path = base + ".activity.log"
+  compressed_path = snapshot_path + ".bz2"
+  try:
+    log_session.snapshot(snapshot_path)
+  except (OSError, ValueError) as exc:
+    logging.error("Unable to snapshot activity log: %s", exc)
+    return None
+
+  compressor = fileutils.select_bzip2_compressor(configuration.which)
+  if compressor is None:
+    logging.error("Activity log upload requires a bzip2-compatible compressor, but none was found")
+    try:
+      os.unlink(snapshot_path)
+    except OSError:
+      pass
+    return None
+
+  if not fileutils.compress_with_bzip2(snapshot_path, compressed_path, compressor=compressor):
+    try:
+      os.unlink(snapshot_path)
+    except OSError:
+      pass
+    logging.error("Unable to compress activity log artifact")
+    return None
+
+  os.unlink(snapshot_path)
+  artifact_path = compressed_path
+
+  if config["encrypt"]:
+    artifact_path = encrypt_file(artifact_path)
+    if artifact_path is None:
+      return None
+
+  if config["sign"]:
+    artifact_path = sign_file(artifact_path)
+    if artifact_path is None:
+      return None
+
+  return artifact_path
+
+
 def gatherData():
   base = os.path.join(config["prepdir"], config["prefix"] + config["unique"])
   file_archive = None
   file_manifest = base + ".json"
+  file_activity_log = None
 
   havearchive = False
   if len(newFiles) - len(movedFiles):
@@ -505,6 +578,11 @@ def gatherData():
           if signed is None:
             return None
 
+  if config["upload-activity-log"]:
+    file_activity_log = create_activity_log_artifact(base)
+    if file_activity_log is None:
+      return None
+
   if config["create-filelist"]:
     file_list = base + ".lst"
     fileutils.generateFilelist(config["prepdir"], file_list)
@@ -513,7 +591,7 @@ def gatherData():
       if signed is None:
         return None
 
-  return os.listdir(config["prepdir"])
+  return _prepared_files()
 import atexit
 import logging
 import argparse
@@ -530,6 +608,7 @@ import modules.configuration as configuration
 import modules.fileutils as fileutils
 import modules.gpg as gpg_module
 import modules.helper as helper
+import modules.logsetup as logsetup
 import modules.providers as providers
 
 lastBackup = None
@@ -544,6 +623,7 @@ currentOp = {"filecount": 0, "filesize": 0, "compressable" : 0}
 oldVault = None
 handledFilesInRun = set()
 currentFileDetails = {}
+log_session = None
 
 incompressable = [
   "jpg", "gif", "mkv", "avi", "mov", "mp4",
@@ -568,32 +648,12 @@ parser.add_argument('config', metavar="CONFIG", help="Which config file to load"
 cmdline = parser.parse_args()
 
 """ Setup logging first """
-logging.getLogger('').handlers = []
-loglevel=logging.INFO
-if cmdline.logfile:
-  logformat=u'%(asctime)s - %(levelname)s - %(message)s'
-else:
-  logformat=u'%(message)s'
-if cmdline.debug:
-  loglevel=logging.DEBUG
-  logformat=u'%(asctime)s - %(filename)s@%(lineno)d - %(levelname)s - %(message)s'
-
-# Create a logger
-logger = logging.getLogger()
-logger.setLevel(loglevel)
-
-# Create a handler for stdout
-stream_handler = logging.StreamHandler(sys.stdout)
-stream_handler.setLevel(loglevel)
-stream_handler.setFormatter(logging.Formatter(logformat))
-logger.addHandler(stream_handler)
-
-# Create a handler for the file
-if cmdline.logfile:
-  file_handler = logging.FileHandler(cmdline.logfile)
-  file_handler.setLevel(loglevel)
-  file_handler.setFormatter(logging.Formatter(logformat))
-  logger.addHandler(file_handler)
+log_session = logsetup.create_logging_session(
+  debug=cmdline.debug,
+  logfile_path=cmdline.logfile,
+  stream=sys.stdout,
+  capture_to_temp=not bool(cmdline.logfile),
+)
 
 logging.getLogger("shutil").setLevel(logging.WARNING)
 
@@ -627,6 +687,12 @@ def _cleanup_keyring():
       pass
 
 atexit.register(_cleanup_keyring)
+
+def _cleanup_log_session():
+  if log_session is not None:
+    log_session.cleanup()
+
+atexit.register(_cleanup_log_session)
 
 #######################
 

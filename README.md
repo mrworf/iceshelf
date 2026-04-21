@@ -388,6 +388,23 @@ Possible actions are `new`, `changed`, `deleted`, `renamed`, `moved`, and
 
 *default is `no`*
 
+#### upload activity log
+
+If `yes`, iceshelf snapshots the run log from process start through the point
+just before providers begin uploading the prepared files. That snapshot is
+stored as an additional backup sidecar named like
+`<backup>.activity.log.bz2`.
+
+If `encrypt` is enabled, the activity log sidecar is encrypted. If `sign` is
+enabled, it is also signed. This follows the main backup security settings and
+does not depend on `encrypt manifest`.
+
+When `--debug` is enabled, the uploaded log artifact contains the same verbose
+debug output as the rest of the run log. If you do not encrypt backups, keep
+in mind that this may expose sensitive configuration values in remote storage.
+
+*default is `no`*
+
 #### create filelist
 
 Adds an additional file, called `filelist.txt` which is a shasum compatible file which details the hash of each file in the backup (the produced backup files, not the backed up files) as well as their corresponding sha1 which can be checked with shasum, like so `shasum -c filelist.txt`. This is to tell you what files belong to the backup. It's used by iceshelf-restore. File will also be signed if signature is enabled (see security).
@@ -574,7 +591,7 @@ You can also provide a few options via the commandline, these are not available 
 
 `--changes` will show you what *would* be backed up, if you were to do it
 
-`--logfile` redirects the log output to a separate file, otherwise warning and errors are shown on the console. Enabling file logging will also enable full debugging.
+`--logfile` also writes the run log to a file while keeping normal console output. It uses the same log format as the active run mode and captures startup and configuration errors as well. It does not automatically enable `--debug`.
 
 `--find <string>` will show any file and backup which contains the `<string>`
 

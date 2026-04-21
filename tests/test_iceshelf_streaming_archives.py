@@ -1,5 +1,6 @@
 """Behavior tests for streamed archive assembly."""
 
+import bz2
 import json
 import os
 import subprocess
@@ -69,7 +70,8 @@ def _write_config(path, source_dir, *, compress="no", encrypt=False, sign=False,
                   ignore_unavailable_files="no",
                   tolerate_unreconcilable_files="no",
                   show_delta="no",
-                  detect_move="no"):
+                  detect_move="no",
+                  upload_activity_log="no"):
     key_file_path = path.parent / "combined_test.key"
     if use_key_file and (encrypt or sign):
         _write_key_file(key_file_path)
@@ -109,10 +111,11 @@ ignore unavailable files = {ignore_unavailable_files}
 tolerate unreconcilable files = {tolerate_unreconcilable_files}
 show delta = {show_delta}
 detect move = {detect_move}
+upload activity log = {upload_activity_log}
 """.strip() + "\n" + ("\n" + "\n".join(security_lines) + "\n" if security_lines else ""))
 
 
-def _run_iceshelf(config_path, *, extra_env=None):
+def _run_iceshelf(config_path, *, extra_env=None, extra_args=None):
     stub_root = config_path.parent / "stubs"
     _write_stub_modules(stub_root)
 
@@ -121,9 +124,13 @@ def _run_iceshelf(config_path, *, extra_env=None):
     env["PYTHONPATH"] = str(stub_root) if not existing_pythonpath else str(stub_root) + os.pathsep + existing_pythonpath
     if extra_env:
         env.update(extra_env)
+    args = [sys.executable, ICESHELF_BIN]
+    if extra_args:
+        args.extend(extra_args)
+    args.append(str(config_path))
 
     return subprocess.run(
-        [sys.executable, ICESHELF_BIN, str(config_path)],
+        args,
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -293,6 +300,39 @@ def test_archive_filenames_cover_streamed_variants(tmp_path):
         assert archive_files == [backup_id + suffix]
 
 
+def test_activity_log_filenames_cover_security_variants(tmp_path):
+    cases = [
+        (False, False, ".activity.log.bz2"),
+        (False, True, ".activity.log.bz2.asc"),
+        (True, False, ".activity.log.bz2.gpg"),
+        (True, True, ".activity.log.bz2.gpg.asc"),
+    ]
+
+    for index, (encrypt, sign, suffix) in enumerate(cases, start=1):
+        case_dir = tmp_path / ("activity_case_%d" % index)
+        source_dir = case_dir / "source"
+        _create_source_files(source_dir)
+
+        config_path = case_dir / "iceshelf.conf"
+        _write_config(
+            config_path,
+            source_dir,
+            encrypt=encrypt,
+            sign=sign,
+            upload_activity_log="yes",
+        )
+        extra_env = _prepare_fake_tool_env(case_dir) if encrypt or sign else None
+
+        result = _run_iceshelf(config_path, extra_env=extra_env)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        backup_id = _load_backup_id(case_dir)
+        files = _archive_files_for_backup(case_dir, backup_id)
+
+        activity_files = [name for name in files if ".activity.log." in name]
+        assert activity_files == [backup_id + suffix]
+
+
 def test_streamed_archive_leaves_only_final_artifacts_in_prepdir(tmp_path):
     source_dir = tmp_path / "source"
     _create_source_files(source_dir)
@@ -317,6 +357,67 @@ def test_streamed_archive_leaves_only_final_artifacts_in_prepdir(tmp_path):
         backup_id + ".json.gpg.asc",
         backup_id + ".tar.bz2.gpg.sig",
     ]
+
+
+def test_activity_log_artifact_is_in_filelist_and_stops_before_post_upload_logging(tmp_path):
+    source_dir = tmp_path / "source"
+    _create_source_files(source_dir)
+
+    config_path = tmp_path / "iceshelf.conf"
+    _write_config(
+        config_path,
+        source_dir,
+        create_filelist="yes",
+        upload_activity_log="yes",
+    )
+    logfile_path = tmp_path / "run.log"
+
+    result = _run_iceshelf(config_path, extra_args=["--logfile", str(logfile_path)])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    backup_id = _load_backup_id(tmp_path)
+    backup_dir = tmp_path / "done" / backup_id
+    activity_path = backup_dir / (backup_id + ".activity.log.bz2")
+    filelist_path = backup_dir / (backup_id + ".lst")
+
+    activity_text = bz2.open(activity_path, "rt", encoding="utf-8").read()
+    logfile_text = logfile_path.read_text(encoding="utf-8")
+    filelist_text = filelist_path.read_text(encoding="utf-8")
+
+    assert "Setting up the prep directory" in activity_text
+    assert "Moving backed up archive into done directory" not in activity_text
+    assert logfile_text.startswith(activity_text)
+    assert "Moving backed up archive into done directory" in logfile_text
+    assert (backup_id + ".activity.log.bz2") in filelist_text
+
+
+def test_logfile_captures_configuration_errors_before_backup_starts(tmp_path):
+    source_dir = tmp_path / "source"
+    _create_source_files(source_dir)
+
+    config_path = tmp_path / "iceshelf.conf"
+    config_path.write_text(f"""
+[sources]
+source = {source_dir}
+
+[paths]
+prep dir = {tmp_path / "prep"}
+data dir = {tmp_path / "data"}
+done dir = {tmp_path / "done"}
+create paths = yes
+
+[options]
+upload activity log = maybe
+""".strip() + "\n")
+    logfile_path = tmp_path / "run.log"
+
+    result = _run_iceshelf(config_path, extra_args=["--logfile", str(logfile_path)])
+
+    assert result.returncode == 1
+    assert logfile_path.exists()
+    logfile_text = logfile_path.read_text(encoding="utf-8")
+    assert "upload activity log has to be yes/no" in logfile_text
+    assert "Configuration is broken" in logfile_text
 
 
 def test_forced_compression_fails_when_no_compressor_is_available(tmp_path):

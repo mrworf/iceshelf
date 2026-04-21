@@ -18,6 +18,12 @@ ARCHIVE_SUFFIXES = (
     '.tar.bz2.gpg.sig', '.tar.bz2.gpg', '.tar.bz2.sig', '.tar.bz2',
     '.tar.gpg.sig', '.tar.gpg', '.tar.sig', '.tar')
 FILELIST_SUFFIXES = ('.lst.asc', '.lst')
+ACTIVITY_LOG_SUFFIXES = (
+    '.activity.log.bz2.gpg.asc',
+    '.activity.log.bz2.asc',
+    '.activity.log.bz2.gpg',
+    '.activity.log.bz2',
+)
 # PAR2: archive_filename.par2, archive_filename.volN+MM.par2, optional .sig
 PAR2_VOL_PATTERN = re.compile(r'^\.vol\d+\+\d+\.par2(\.sig)?$')
 
@@ -43,6 +49,15 @@ def get_archive_file(basepath, basename):
 def get_filelist_file(basepath, basename):
     """Return path to filelist file if it exists; check only iceshelf filelist names in order."""
     for suffix in FILELIST_SUFFIXES:
+        path = os.path.join(basepath, basename + suffix)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def get_activity_log_file(basepath, basename):
+    """Return path to uploaded activity log sidecar if it exists."""
+    for suffix in ACTIVITY_LOG_SUFFIXES:
         path = os.path.join(basepath, basename + suffix)
         if os.path.isfile(path):
             return path
@@ -86,6 +101,9 @@ def get_files_for_basename(basepath, basename):
     filelist_path = get_filelist_file(basepath, basename)
     if filelist_path:
         files.append(os.path.basename(filelist_path))
+    activity_log_path = get_activity_log_file(basepath, basename)
+    if activity_log_path:
+        files.append(os.path.basename(activity_log_path))
     return files
 
 

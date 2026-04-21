@@ -109,7 +109,7 @@ def sumSize(path, files):
   return result
 
 def generateFilelist(path, output):
-  files = os.listdir(path)
+  files = sorted(os.listdir(path))
   with open(output, 'w', encoding="utf-8") as lst:
     for f in files:
       lst.write('{}  {}\n'.format(hashFile(os.path.join(path, f), 'sha1'), f))
@@ -126,3 +126,26 @@ def select_bzip2_compressor(which_func=None):
       return resolved
 
   return None
+
+
+def compress_with_bzip2(input_path, output_path, compressor=None):
+  """Compress input_path to output_path using a bzip2-compatible compressor."""
+  if compressor is None:
+    compressor = select_bzip2_compressor()
+  if compressor is None:
+    logging.error("Compression was requested, but no bzip2-compatible compressor was found")
+    return False
+
+  with open(input_path, 'rb') as src, open(output_path, 'wb') as dst:
+    process = Popen([compressor, '-c'], stdin=src, stdout=dst, stderr=PIPE)
+    _out, err = process.communicate()
+  if process.returncode != 0:
+    logging.error("Command: %s", repr([compressor, '-c']))
+    logging.error("Error : %s", err)
+    logging.error("Code  : %s", str(process.returncode))
+    try:
+      os.unlink(output_path)
+    except OSError:
+      pass
+    return False
+  return True
