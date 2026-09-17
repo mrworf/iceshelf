@@ -610,6 +610,7 @@ import modules.gpg as gpg_module
 import modules.helper as helper
 import modules.logsetup as logsetup
 import modules.providers as providers
+import modules.upload as upload
 
 lastBackup = None
 oldMoves = {}
@@ -977,10 +978,27 @@ def logGatheredFiles(files):
 
 
 def uploadPreparedFiles(files):
-  file_paths = [os.path.join(config["prepdir"], f) for f in files]
+  payload_files, receipt_file = upload.split_receipt_files(
+    files, config["prefix"] + config["unique"])
+  payload_paths = [os.path.join(config["prepdir"], f) for f in payload_files]
+  receipt_paths = []
+  if receipt_file is not None:
+    receipt_paths = [os.path.join(config["prepdir"], receipt_file)]
+
   for p in provider_objects:
-    backup = p.upload_files(file_paths)
-    if not backup:
+    upload_sets = []
+    if payload_paths:
+      upload_sets.append(("backup files", payload_paths))
+    if receipt_paths:
+      upload_sets.append(("completion receipt", receipt_paths))
+
+    for label, file_paths in upload_sets:
+      backup = p.upload_files(file_paths)
+      if not backup:
+        logging.error("Backup provider %s failed to store %s", p, label)
+        return False
+
+    if not upload_sets:
       logging.error("Backup provider %s failed to store files", p)
       return False
   return True

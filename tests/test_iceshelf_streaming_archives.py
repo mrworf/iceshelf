@@ -273,6 +273,42 @@ def _load_manifest(path):
         return json.load(fp)
 
 
+def _append_scp_provider(config_path, dest="/remote"):
+    with open(config_path, "a", encoding="utf-8") as fp:
+        fp.write(f"""
+[provider-scp]
+type = scp
+user = backup
+host = example.invalid
+dest = {dest}
+""")
+
+
+def _write_fake_scp(bin_dir):
+    bin_dir.mkdir(exist_ok=True)
+    fake_scp = bin_dir / "scp"
+    fake_scp.write_text("""#!/usr/bin/python3
+import os
+import sys
+
+source = sys.argv[-2]
+basename = os.path.basename(source)
+log_path = os.environ["ICESHELF_FAKE_SCP_LOG"]
+
+with open(log_path, "a", encoding="utf-8") as fp:
+    fp.write(basename + "\\n")
+
+if os.environ.get("ICESHELF_FAKE_SCP_FAIL_RECEIPT") == "yes":
+    if basename.endswith(".lst") or basename.endswith(".lst.asc"):
+        sys.stderr.write("simulated receipt failure\\n")
+        raise SystemExit(23)
+
+raise SystemExit(0)
+""")
+    fake_scp.chmod(0o755)
+    return fake_scp
+
+
 def test_archive_filenames_cover_streamed_variants(tmp_path):
     cases = [
         ("no", False, False, ".tar"),
@@ -389,6 +425,63 @@ def test_activity_log_artifact_is_in_filelist_and_stops_before_post_upload_loggi
     assert logfile_text.startswith(activity_text)
     assert "Moving backed up archive into done directory" in logfile_text
     assert (backup_id + ".activity.log.bz2") in filelist_text
+
+
+def test_scp_provider_uploads_filelist_last_as_receipt(tmp_path):
+    source_dir = tmp_path / "source"
+    _create_source_files(source_dir)
+
+    config_path = tmp_path / "iceshelf.conf"
+    _write_config(config_path, source_dir, create_filelist="yes")
+    _append_scp_provider(config_path)
+
+    log_path = tmp_path / "scp.log"
+    bin_dir = tmp_path / "bin"
+    _write_fake_scp(bin_dir)
+
+    extra_env = {
+        "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+        "ICESHELF_FAKE_SCP_LOG": str(log_path),
+    }
+
+    result = _run_iceshelf(config_path, extra_env=extra_env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    uploaded = log_path.read_text(encoding="utf-8").splitlines()
+    backup_id = _load_backup_id(tmp_path)
+
+    assert uploaded[-1] == backup_id + ".lst"
+    assert backup_id + ".lst" not in uploaded[:-1]
+    assert any(name.startswith(backup_id + ".tar") for name in uploaded[:-1])
+    assert any(name.startswith(backup_id + ".json") for name in uploaded[:-1])
+
+
+def test_scp_receipt_failure_prevents_local_state_commit(tmp_path):
+    source_dir = tmp_path / "source"
+    _create_source_files(source_dir)
+
+    config_path = tmp_path / "iceshelf.conf"
+    _write_config(config_path, source_dir, create_filelist="yes")
+    _append_scp_provider(config_path)
+
+    log_path = tmp_path / "scp.log"
+    bin_dir = tmp_path / "bin"
+    _write_fake_scp(bin_dir)
+
+    extra_env = {
+        "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+        "ICESHELF_FAKE_SCP_LOG": str(log_path),
+        "ICESHELF_FAKE_SCP_FAIL_RECEIPT": "yes",
+    }
+
+    result = _run_iceshelf(config_path, extra_env=extra_env)
+
+    assert result.returncode == 1
+    uploaded = log_path.read_text(encoding="utf-8").splitlines()
+
+    assert uploaded[-1].endswith(".lst")
+    assert not (tmp_path / "data" / "checksum.json").exists()
+    assert "failed to store completion receipt" in result.stdout
 
 
 def test_logfile_captures_configuration_errors_before_backup_starts(tmp_path):

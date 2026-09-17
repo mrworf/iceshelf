@@ -11,6 +11,10 @@ implementation.
 You may define multiple provider sections in one config file. Every configured
 provider receives the generated backup files.
 
+When `create filelist` is enabled, iceshelf uploads the generated `.lst` file
+last for each provider. That final filelist, or `.lst.asc` when signing is
+enabled, acts as the provider-local completion receipt for the backup set.
+
 Example:
 
 ```ini

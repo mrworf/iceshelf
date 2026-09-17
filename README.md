@@ -115,7 +115,7 @@ me, finding cool names (phun intended) for projects is not always easy*
 9. Parity file(s) are created to allow the archive to be restored should bitrot happen
 10. Filelist with checksums is created
 11. All extra files (filelist, parity, etc) files are signed
-12. Resulting files are uploaded using the configured providers (remote uploads may take a while)
+12. Resulting files are uploaded using the configured providers (remote uploads may take a while); when filelist creation is enabled, the filelist is uploaded last as the completion receipt for each destination
 13. Backup is copied to safe keeping (if done directory is specified)
 14. Prep directory is emptied
 15. New backup is added to local database
@@ -407,7 +407,9 @@ in mind that this may expose sensitive configuration values in remote storage.
 
 #### create filelist
 
-Adds an additional file, called `filelist.txt` which is a shasum compatible file which details the hash of each file in the backup (the produced backup files, not the backed up files) as well as their corresponding sha1 which can be checked with shasum, like so `shasum -c filelist.txt`. This is to tell you what files belong to the backup. It's used by iceshelf-restore. File will also be signed if signature is enabled (see security).
+Adds an additional file, called `filelist.txt` which is a shasum compatible file which details the hash of each file in the backup (the produced backup files, not the backed up files) as well as their corresponding sha1 which can be checked with shasum, like so `shasum -c filelist.txt`. This is to tell you what files belong to the backup. It's used by iceshelf-restore.
+
+The filelist is uploaded after the other backup artifacts, so its presence on a destination is also the completion receipt for that provider. File will also be signed if signature is enabled (see security), in which case the signed `.lst.asc` file is the receipt.
 
 *default is `yes`*
 
